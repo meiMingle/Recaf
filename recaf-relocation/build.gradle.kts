@@ -19,6 +19,13 @@ plugins {
     id("java-library")
 }
 
+repositories {
+    flatDir {
+        dirs("libs")
+    }
+    mavenCentral() // <2>
+}
+
 val artifactTypeAttribute = Attribute.of("artifactType", String::class.java)
 val repackagedAttribute = Attribute.of("repackaged", Boolean::class.javaObjectType)
 
@@ -165,6 +172,6 @@ dependencies {
 
     repackage(libs.vineflower)
     repackage(libs.fernflower)
-    repackage(libs.forgeflower)
+    repackage(":forgeflower:2.0.674.2")
     api(files(repackage.files))
 }
