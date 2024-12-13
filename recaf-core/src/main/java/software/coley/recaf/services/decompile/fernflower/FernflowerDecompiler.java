@@ -36,7 +36,7 @@ public class FernflowerDecompiler extends AbstractJvmDecompiler {
     @Inject
     public FernflowerDecompiler(@Nonnull FernflowerConfig config) {
         // Change this version to be dynamic when / if the Fernflower authors make a function that returns the version...
-        super(NAME, "243.21565-EAP-CANDIDATE-SNAPSHOT", config);
+        super(NAME, "251.10074-EAP-CANDIDATE-SNAPSHOT", config);
         this.config = config;
         logger = new FernflowerLogger(config);
     }
