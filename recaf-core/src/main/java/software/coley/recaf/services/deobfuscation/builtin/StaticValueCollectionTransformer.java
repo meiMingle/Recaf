@@ -11,18 +11,18 @@ import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.LdcInsnNode;
-import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.analysis.Frame;
 import software.coley.recaf.info.JvmClassInfo;
 import software.coley.recaf.info.member.FieldMember;
 import software.coley.recaf.services.inheritance.InheritanceGraph;
+import software.coley.recaf.services.inheritance.InheritanceGraphService;
 import software.coley.recaf.services.transform.JvmClassTransformer;
 import software.coley.recaf.services.transform.JvmTransformerContext;
 import software.coley.recaf.services.transform.TransformationException;
+import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.util.analysis.ReAnalyzer;
 import software.coley.recaf.util.analysis.ReInterpreter;
-import software.coley.recaf.util.analysis.lookup.InvokeVirtualLookup;
 import software.coley.recaf.util.analysis.value.DoubleValue;
 import software.coley.recaf.util.analysis.value.FloatValue;
 import software.coley.recaf.util.analysis.value.IntValue;
@@ -34,7 +34,7 @@ import software.coley.recaf.workspace.model.bundle.JvmClassBundle;
 import software.coley.recaf.workspace.model.resource.WorkspaceResource;
 
 import java.util.HashSet;
-import java.util.List;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,11 +48,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public class StaticValueCollectionTransformer implements JvmClassTransformer {
 	private final Map<String, StaticValues> classValues = new ConcurrentHashMap<>();
 	private final Map<String, EffectivelyFinalFields> classFinals = new ConcurrentHashMap<>();
-	private final InheritanceGraph graph;
+	private final InheritanceGraphService graphService;
+	private final WorkspaceManager workspaceManager;
+	private InheritanceGraph inheritanceGraph;
 
 	@Inject
-	public StaticValueCollectionTransformer(@Nonnull InheritanceGraph graph) {
-		this.graph = graph;
+	public StaticValueCollectionTransformer(@Nonnull WorkspaceManager workspaceManager, @Nonnull InheritanceGraphService graphService) {
+		this.workspaceManager = workspaceManager;
+		this.graphService = graphService;
 	}
 
 	@Nullable
@@ -61,6 +64,13 @@ public class StaticValueCollectionTransformer implements JvmClassTransformer {
 		if (values == null)
 			return null;
 		return values.get(fieldName, fieldDesc);
+	}
+
+	@Override
+	public void setup(@Nonnull JvmTransformerContext context, @Nonnull Workspace workspace) {
+		inheritanceGraph = workspace == workspaceManager.getCurrent() ?
+				graphService.getCurrentWorkspaceInheritanceGraph() :
+				graphService.newInheritanceGraph(workspace);
 	}
 
 	@Override
@@ -132,7 +142,7 @@ public class StaticValueCollectionTransformer implements JvmClassTransformer {
 
 			// Only analyze if we see static setters
 			if (clinit != null && hasStaticSetters(clinit)) {
-				ReInterpreter interpreter = new ReInterpreter(graph);
+				ReInterpreter interpreter = new ReInterpreter(inheritanceGraph);
 				ReAnalyzer analyzer = new ReAnalyzer(interpreter);
 				try {
 					Frame<ReValue>[] frames = analyzer.analyze(className, clinit);
