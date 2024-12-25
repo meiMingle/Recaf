@@ -34,7 +34,7 @@ public class CfrDecompiler extends AbstractJvmDecompiler {
 	 */
 	@Inject
 	public CfrDecompiler(@Nonnull CfrConfig config) {
-		super(NAME, CfrVersionInfo.VERSION, config);
+		super(NAME, CfrVersionInfo.VERSION+"_"+CfrVersionInfo.GIT_COMMIT_ABBREVIATED, config);
 		this.config = config;
 	}
 
