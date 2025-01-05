@@ -107,7 +107,7 @@ public class MappingProgressPane extends BorderPane implements ResourceJvmClassL
 
 		// When a workspace is opened, refresh the tree and listen for changes on the new workspace.
 		workspaceManager.addWorkspaceOpenListener(workspace -> {
-			int classes = workspace.findClasses(c -> true).size();
+			int classes = workspace.findClasses(false, c -> true).size();
 
 			treeMapPane.setPrefWidth(40 * classes);
 			treeMapPane.setPrefHeight(5 * classes);
@@ -246,8 +246,8 @@ public class MappingProgressPane extends BorderPane implements ResourceJvmClassL
 	}
 
 	private void updateTree() {
-		Workspace workspace = workspaceManager.getCurrent();
-		if (workspace != null) {
+		if (workspaceManager.hasCurrentWorkspace()) {
+			Workspace workspace = workspaceManager.getCurrent();
 			Callable<Boolean> action = () -> treeContentListDelegate.setAll(buildTreeRoots(workspaceToTree(workspace)));
 			if (active.get())
 				pool.submit(action);
