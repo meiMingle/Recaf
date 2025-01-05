@@ -632,6 +632,7 @@ service.decompile.impl.decompiler-cfr-config.tidymonitors=Remove support code fo
 service.decompile.impl.decompiler-cfr-config.tryresources=Reconstruct try-with-resources
 service.decompile.impl.decompiler-cfr-config.usenametable=Use local variable name table if present
 service.decompile.impl.decompiler-cfr-config.usesignatures=Use signatures in addition to descriptors (when they are not obviously incorrect)
+service.decompile.impl.decompiler-cfr-config.trackbytecodeloc=Propagate bytecode location info
 service.decompile.impl.decompiler-cfr-config.version=Show the current CFR version
 service.decompile.impl.decompiler-procyon-config=Procyon
 service.decompile.impl.decompiler-procyon-config.alwaysGenerateExceptionVariableForCatchBlocks=Always generate catch block

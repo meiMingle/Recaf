@@ -111,6 +111,7 @@ public class CfrConfig extends BaseDecompilerConfig {
 	private final ObservableObject<TrooleanOption> allowmalformedswitch = new ObservableObject<>(TrooleanOption.DEFAULT);
 	private final ObservableObject<BooleanOption> elidescala = new ObservableObject<>(BooleanOption.DEFAULT);
 	private final ObservableObject<BooleanOption> usesignatures = new ObservableObject<>(BooleanOption.DEFAULT);
+	private final ObservableObject<BooleanOption> trackbytecodeloc = new ObservableObject<>(BooleanOption.TRUE);
 
 	@Inject
 	public CfrConfig() {
@@ -196,6 +197,7 @@ public class CfrConfig extends BaseDecompilerConfig {
 		addValue(new BasicConfigValue<>("allowmalformedswitch", TrooleanOption.class, allowmalformedswitch));
 		addValue(new BasicConfigValue<>("elidescala", BooleanOption.class, elidescala));
 		addValue(new BasicConfigValue<>("usesignatures", BooleanOption.class, usesignatures));
+		addValue(new BasicConfigValue<>("trackbytecodeloc", BooleanOption.class, trackbytecodeloc));
 		registerConfigValuesHashUpdates();
 	}
 

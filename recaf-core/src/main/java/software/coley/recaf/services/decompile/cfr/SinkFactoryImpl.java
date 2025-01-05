@@ -2,12 +2,11 @@ package software.coley.recaf.services.decompile.cfr;
 
 import jakarta.annotation.Nullable;
 import org.benf.cfr.reader.api.OutputSinkFactory;
+import org.benf.cfr.reader.api.SinkReturns;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
+import java.util.*;
 
 /**
  * Cfr logging/output sinker.
@@ -18,6 +17,7 @@ public class SinkFactoryImpl implements OutputSinkFactory {
 	private static final Logger logger = Logging.get(SinkFactoryImpl.class);
 	private Throwable exception;
 	private String decompile;
+	final NavigableMap<Integer, List<Integer>> lineMapping = new TreeMap<>();
 
 	@Override
 	public List<SinkClass> getSupportedSinks(SinkType sinkType, Collection<SinkClass> collection) {
@@ -29,7 +29,34 @@ public class SinkFactoryImpl implements OutputSinkFactory {
 		return switch (sinkType) {
 			case JAVA -> this::setDecompilation;
 			case EXCEPTION -> this::handleException;
+			case LINENUMBER -> t -> {
+				SinkReturns.LineNumberMapping mapping = (SinkReturns.LineNumberMapping) t;
+				NavigableMap<Integer, Integer> classFileMappings = mapping.getClassFileMappings();
+				NavigableMap<Integer, Integer> mappings = mapping.getMappings();//
+				if (classFileMappings != null && mappings != null) {
+					for (Map.Entry<Integer, Integer> entry : mappings.entrySet()) {
+						Integer srcLineNumber = classFileMappings.get(entry.getKey());
+						if (srcLineNumber == null) {
+							continue;
+						}
+						List<Integer> numbers = lineMapping.get(entry.getValue());
+						if (numbers == null) {
+							numbers = new ArrayList<>();
+							numbers.add(srcLineNumber);
+							lineMapping.put(entry.getValue(), numbers);
+						} else {
+							if (!numbers.contains(srcLineNumber)) {
+								numbers.add(srcLineNumber);
+							}
+						}
+					}
+				}
+			};
+			case PROGRESS -> t -> {
+
+			};
 			default -> t -> {
+
 			};
 		};
 	}
@@ -52,7 +79,27 @@ public class SinkFactoryImpl implements OutputSinkFactory {
 	 */
 	@Nullable
 	public String getDecompilation() {
-		return decompile;
+		return addLineNumber(decompile,lineMapping);
+	}
+
+	private static String addLineNumber(String src, Map<Integer, List<Integer>> lineMapping) {
+
+		StringBuilder sb = new StringBuilder();
+
+		int index = 0;
+		try (Scanner sc = new Scanner(src)) {
+			while (sc.hasNextLine()) {
+				String line = sc.nextLine();
+				sb.append(line);
+				List<Integer> srcLineNumbers = lineMapping.get(index + 1);
+				if (srcLineNumbers != null) {
+					srcLineNumbers.forEach(e->sb.append("// ").append(e).append(" "));
+				}
+				sb.append("\n");
+				index++;
+			}
+		}
+		return sb.toString();
 	}
 
 	/**
