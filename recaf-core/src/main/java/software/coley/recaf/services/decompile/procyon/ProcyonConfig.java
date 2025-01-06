@@ -41,7 +41,8 @@ public class ProcyonConfig extends BaseDecompilerConfig {
 	private final ObservableBoolean arePreviewFeaturesEnabled = new ObservableBoolean(false);
 	private final ObservableInteger textBlockLineMinimum = new ObservableInteger(3);
 	private final ObservableObject<CompilerTarget> forcedCompilerTarget = new ObservableObject<>(null);
-	private final ObservableObject<BytecodeOutputOptions> bytecodeOutputOptions = new ObservableObject<>(BytecodeOutputOptions.createDefault());
+	// private final ObservableObject<BytecodeOutputOptions> bytecodeOutputOptions = new ObservableObject<>(BytecodeOutputOptions.createDefault());
+	private final ObservableBoolean bytecodeOutputOptions_showLineNumbers = new ObservableBoolean(true);
 	@Inject
 	public ProcyonConfig() {
 		super("decompiler-procyon" + CONFIG_SUFFIX);
@@ -63,8 +64,10 @@ public class ProcyonConfig extends BaseDecompilerConfig {
 		addValue(new BasicConfigValue<>("simplifyMemberReferences", boolean.class, simplifyMemberReferences));
 		addValue(new BasicConfigValue<>("arePreviewFeaturesEnabled", boolean.class, arePreviewFeaturesEnabled));
 		addValue(new BasicConfigValue<>("textBlockLineMinimum", int.class, textBlockLineMinimum));
-		addValue(new BasicConfigValue<>("forcedCompilerTarget", CompilerTarget.class, forcedCompilerTarget));
-		addValue(new BasicConfigValue<>("bytecodeOutputOptions", BytecodeOutputOptions.class, bytecodeOutputOptions));
+
+		// BytecodeOutputOptions options = BytecodeOutputOptions.createVerbose();
+		// options.showLineNumbers = bytecodeOutputOptions_showLineNumbers.getValue();
+		addValue(new BasicConfigValue<>("bytecodeOutputOptions.showLineNumbers ", boolean.class,bytecodeOutputOptions_showLineNumbers));
 		registerConfigValuesHashUpdates();
 	}
 
@@ -92,8 +95,11 @@ public class ProcyonConfig extends BaseDecompilerConfig {
 		decompilerSettings.setSimplifyMemberReferences(simplifyMemberReferences.getValue());
 		decompilerSettings.setPreviewFeaturesEnabled(arePreviewFeaturesEnabled.getValue());
 		decompilerSettings.setTextBlockLineMinimum(textBlockLineMinimum.getValue());
+
 		decompilerSettings.setForcedCompilerTarget(forcedCompilerTarget.getValue());
-		decompilerSettings.setBytecodeOutputOptions(bytecodeOutputOptions.getValue());
+		BytecodeOutputOptions options = BytecodeOutputOptions.createDefault();
+		options.showLineNumbers = bytecodeOutputOptions_showLineNumbers.getValue();
+		decompilerSettings.setBytecodeOutputOptions(options);
 		return decompilerSettings;
 	}
 
@@ -193,7 +199,7 @@ public class ProcyonConfig extends BaseDecompilerConfig {
 	}
 
 	@Nonnull
-	public ObservableObject<BytecodeOutputOptions> getBytecodeOutputOptions() {
-		return bytecodeOutputOptions;
+	public ObservableBoolean getBytecodeOutputOptions_showLineNumbers() {
+		return bytecodeOutputOptions_showLineNumbers;
 	}
 }
