@@ -15,6 +15,8 @@ import java.util.Stack;
 
 /**
  * Enigma mappings file implementation.
+ * <p>
+ * Specification: <a href="https://wiki.fabricmc.net/documentation:enigma_mappings">enigma_mappings</a>
  *
  * @author Matt Coley
  */
@@ -41,13 +43,16 @@ public class EnigmaMappings extends AbstractMappingFileFormat {
 		//     FIELD baseField targetField baseDesc
 		//     METHOD baseMethod targetMethod baseMethodDesc
 		//         ARG baseArg targetArg
-		int line = 0;
 		Stack<String> currentClass = new Stack<>();
-		for (String lineStr : lines) {
-			line++;
+		for (int i = 0; i < lines.length; i++) {
+			String lineStr = lines[i];
 			String lineStrTrim = lineStr.trim();
+			if (lineStrTrim.isBlank())
+				continue;
 			int strIndent = lineStr.indexOf(lineStrTrim) + 1;
 			String[] args = lineStrTrim.split(" ");
+			if (args.length == 0)
+				continue;
 			String type = args[0];
 			try {
 				switch (type) {
@@ -68,12 +73,17 @@ public class EnigmaMappings extends AbstractMappingFileFormat {
 						break;
 					case "FIELD":
 						// Check if no longer within inner-class scope
-						if (strIndent < currentClass.size()) {
+						if (strIndent < currentClass.size())
 							currentClass.pop();
-						}
+
 						// Parse field
 						if (currentClass.empty())
 							throw new IllegalArgumentException(FAIL + "could not map field, no class context");
+
+						// Skip if there aren't enough arguments to pull the necessary items
+						if (args.length < 4)
+							continue;
+
 						String currentField = removeNonePackage(args[1]);
 						String renamedField = removeNonePackage(args[2]);
 						String currentFieldDesc = removeNonePackage(args[3]);
@@ -81,15 +91,22 @@ public class EnigmaMappings extends AbstractMappingFileFormat {
 						break;
 					case "METHOD":
 						// Check if no longer within inner-class scope
-						if (strIndent < currentClass.size()) {
+						if (strIndent < currentClass.size())
 							currentClass.pop();
-						}
+
 						// Parse method
 						if (currentClass.empty())
 							throw new IllegalArgumentException(FAIL + "could not map method, no class context");
-						String currentMethod = args[1];
-						if (currentMethod.equals("<init>"))
+
+						// Skip if there aren't enough arguments to pull the necessary items
+						if (args.length < 4)
 							continue;
+
+						// Skip constructors/initializers
+						String currentMethod = args[1];
+						if (currentMethod.startsWith("<"))
+							continue;
+
 						// Not all methods need to be renamed if they have child arg elements that are renamed
 						if (args.length >= 4) {
 							String renamedMethod = args[2];
@@ -102,11 +119,11 @@ public class EnigmaMappings extends AbstractMappingFileFormat {
 						// Do nothing, mapper does not support comments & arg names
 						break;
 					default:
-						logger.trace("Unknown Engima mappings line type: \"{}\" @line {}", type, line);
+						logger.trace("Unknown Engima mappings line type: \"{}\" @line {}", type, i);
 						break;
 				}
 			} catch (IndexOutOfBoundsException ex) {
-				throw new IllegalArgumentException(FAIL + "failed parsing line " + line, ex);
+				throw new IllegalArgumentException(FAIL + "failed parsing line " + i, ex);
 			}
 		}
 		return mappings;

@@ -86,13 +86,37 @@ public class JvmClassInfoBuilder extends AbstractClassInfoBuilder<JvmClassInfoBu
 	}
 
 	/**
+	 * Creates a builder with data pulled from the given bytecode.
+	 *
+	 * @param reader
+	 * 		ASM class reader to read bytecode from.
+	 * @param readerFlags
+	 * 		Reader flags to use when populating information via {@link ClassReader#accept(ClassVisitor, int)}.
+	 */
+	public JvmClassInfoBuilder(@Nonnull ClassReader reader, int readerFlags) {
+		adaptFrom(reader, readerFlags);
+	}
+
+	/**
 	 * Creates a builder with the given bytecode.
 	 *
 	 * @param bytecode
 	 * 		Class bytecode to read values from.
 	 */
 	public JvmClassInfoBuilder(@Nonnull byte[] bytecode) {
-		adaptFrom(bytecode);
+		this(bytecode, 0);
+	}
+
+	/**
+	 * Creates a builder with the given bytecode.
+	 *
+	 * @param bytecode
+	 * 		Class bytecode to read values from.
+	 * @param readerFlags
+	 * 		Reader flags to use when populating information via {@link ClassReader#accept(ClassVisitor, int)}.
+	 */
+	public JvmClassInfoBuilder(@Nonnull byte[] bytecode, int readerFlags) {
+		adaptFrom(bytecode, readerFlags);
 	}
 
 	/**
@@ -139,14 +163,14 @@ public class JvmClassInfoBuilder extends AbstractClassInfoBuilder<JvmClassInfoBu
 	 *
 	 * @param code
 	 * 		Class bytecode to pull data from.
-	 * @param flags
-	 * 		Reader flags to use when populating information.
+	 * @param readerFlags
+	 * 		Reader flags to use when populating information via {@link ClassReader#accept(ClassVisitor, int)}.
 	 *
 	 * @return Builder.
 	 */
 	@Nonnull
-	public JvmClassInfoBuilder adaptFrom(@Nonnull byte[] code, int flags) {
-		return adaptFrom(new ClassReader(code), flags);
+	public JvmClassInfoBuilder adaptFrom(@Nonnull byte[] code, int readerFlags) {
+		return adaptFrom(new ClassReader(code), readerFlags);
 	}
 
 	/**
