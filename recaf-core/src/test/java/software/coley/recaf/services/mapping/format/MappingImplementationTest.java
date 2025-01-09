@@ -4,8 +4,7 @@ import org.junit.jupiter.api.Test;
 import software.coley.recaf.services.mapping.IntermediateMappings;
 import software.coley.recaf.services.mapping.Mappings;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests various {@link MappingFileFormat} implementation's ability to parse input texts.
@@ -125,9 +124,25 @@ public class MappingImplementationTest {
 				CLASS test/Greetings rename/Hello
 				\tFIELD oldField newField Ljava/lang/String;
 				\tMETHOD say speak ()V""";
+		String mappingsTextWithTrailingNewline = mappingsText + "\n";
+
+		// The format spec says there should be a trailing newline, but we'll support both cases
 		MappingFileFormat format = new EnigmaMappings();
 		IntermediateMappings mappings = assertDoesNotThrow(() -> format.parse(mappingsText));
 		assertInheritMap(mappings);
+		mappings = assertDoesNotThrow(() -> format.parse(mappingsTextWithTrailingNewline));
+		assertInheritMap(mappings);
+
+		// The mapped names are optional, so we should be able to parse a sample with no
+		// actual target names, and get an empty result.
+		String mappingsTextWithNoDestinationNames = """
+				CLASS test/Greetings
+				\tFIELD oldField Ljava/lang/String;
+				\tMETHOD say ()V""";
+		mappings = assertDoesNotThrow(() -> format.parse(mappingsTextWithNoDestinationNames));
+		assertTrue(mappings.getClasses().isEmpty());
+		assertTrue(mappings.getFields().isEmpty());
+		assertTrue(mappings.getMethods().isEmpty());
 	}
 
 	@Test
