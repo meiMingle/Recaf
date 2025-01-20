@@ -7,8 +7,8 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.paint.Color;
 import me.darknet.assembler.ast.ASTElement;
 import me.darknet.assembler.ast.primitive.ASTCode;
-import me.darknet.assembler.ast.specific.ASTMethod;
 import me.darknet.assembler.util.BlwOpcodes;
+import me.darknet.assembler.util.EscapeUtil;
 import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.model.PlainTextChange;
 import org.kordamp.ikonli.carbonicons.CarbonIcons;
@@ -43,10 +43,11 @@ import java.util.stream.Stream;
  * @author Matt Coley
  */
 public class AssemblerTabCompleter implements TabCompleter<AssemblerTabCompleter.AssemblerCompletion> {
-	private final CompletionPopup<AssemblerCompletion> completionPopup = new AssemblerCompletionPopup(15);
+	private final CompletionPopup<AssemblerCompletion> completionPopup;
 	private final Workspace workspace;
 	private final InheritanceGraph inheritanceGraph;
 	private final CellConfigurationService configurationService;
+	private final TabCompletionConfig config;
 	private CodeArea area;
 	private List<ASTElement> ast;
 	private Context context;
@@ -56,13 +57,20 @@ public class AssemblerTabCompleter implements TabCompleter<AssemblerTabCompleter
 	 * 		Workspace to pull class info from.
 	 * @param inheritanceGraph
 	 * 		Graph to pull hierarchies from.
+	 * @param configurationService
+	 * 		Service to configure cell content.
+	 * @param config
+	 * 		Tab completion config.
 	 */
 	public AssemblerTabCompleter(@Nonnull Workspace workspace,
 	                             @Nonnull InheritanceGraph inheritanceGraph,
-	                             @Nonnull CellConfigurationService configurationService) {
+	                             @Nonnull CellConfigurationService configurationService,
+	                             @Nonnull TabCompletionConfig config) {
 		this.workspace = workspace;
 		this.inheritanceGraph = inheritanceGraph;
 		this.configurationService = configurationService;
+		this.completionPopup = new AssemblerCompletionPopup(config);
+		this.config = config;
 	}
 
 	/**
@@ -96,7 +104,9 @@ public class AssemblerTabCompleter implements TabCompleter<AssemblerTabCompleter
 	@Nonnull
 	@Override
 	public List<AssemblerCompletion> computeCurrentCompletions() {
-		return context.complete();
+		return context.complete().stream()
+				.filter(completion -> completion.text().length() <= config.getMaxCompletionLength())
+				.toList();
 	}
 
 	@Override
@@ -139,17 +149,15 @@ public class AssemblerTabCompleter implements TabCompleter<AssemblerTabCompleter
 
 		// Must be in code block
 		boolean inCode = false;
-		ASTElement element = ast.getFirst();
 		int caret = area.getCaretPosition();
-		for (int i = 0; i < 5; i++) {
-			if (element instanceof ASTMethod method) {
-				ASTCode code = method.code();
+		ASTElement element = ast.getFirst().pick(caret);
+		while (element != null) {
+			if (element instanceof ASTCode code) {
 				if (code.range().within(caret))
 					inCode = true;
 				break;
-			} else {
-				element = element.pick(caret);
 			}
+			element = element.parent();
 		}
 		if (!inCode) {
 			context = new EmptyContext();
@@ -225,8 +233,8 @@ public class AssemblerTabCompleter implements TabCompleter<AssemblerTabCompleter
 	}
 
 	private class AssemblerCompletionPopup extends CompletionPopup<AssemblerCompletion> {
-		private AssemblerCompletionPopup(int maxItemsToShow) {
-			super(STANDARD_CELL_SIZE, maxItemsToShow, AssemblerCompletion::text, completion -> switch (completion) {
+		private AssemblerCompletionPopup(@Nonnull TabCompletionConfig config) {
+			super(config, STANDARD_CELL_SIZE, AssemblerCompletion::text, completion -> switch (completion) {
 				case AssemblerCompletion.Opcode opcode -> {
 					String text = opcode.text();
 					if (text.startsWith("invoke"))
@@ -538,7 +546,7 @@ public class AssemblerTabCompleter implements TabCompleter<AssemblerTabCompleter
 			@Nonnull
 			@Override
 			public String text() {
-				return path.getValue().getName();
+				return EscapeUtil.escapeLiteral(path.getValue().getName());
 			}
 		}
 
@@ -551,7 +559,9 @@ public class AssemblerTabCompleter implements TabCompleter<AssemblerTabCompleter
 			@Override
 			public String text() {
 				ClassMember member = path.getValue();
-				return member.getName() + " " + member.getDescriptor();
+				String name = EscapeUtil.escapeLiteral(member.getName());
+				String desc = EscapeUtil.escapeLiteral(member.getDescriptor());
+				return name + " " + desc;
 			}
 		}
 	}
