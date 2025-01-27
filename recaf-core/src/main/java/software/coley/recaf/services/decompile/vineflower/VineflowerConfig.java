@@ -54,8 +54,10 @@ public class VineflowerConfig extends BaseDecompilerConfig {
     private final ObservableBoolean finallyDeinline = new ObservableBoolean(true);
     private final ObservableBoolean ideaNotNullAnnotation = new ObservableBoolean(true);
     private final ObservableBoolean lambdaToAnonymousClass = new ObservableBoolean(false);
-    private final ObservableBoolean bytecodeSourceMapping = new ObservableBoolean(false);
-    private final ObservableBoolean __dumpOriginalLines__ = new ObservableBoolean(false);
+    // private final ObservableBoolean bytecodeSourceMapping = new ObservableBoolean(false);
+    private final ObservableBoolean bytecodeSourceMapping = new ObservableBoolean(true);
+    // private final ObservableBoolean __dumpOriginalLines__ = new ObservableBoolean(false);
+    private final ObservableBoolean __dumpOriginalLines__ = new ObservableBoolean(true);
     private final ObservableBoolean ignoreInvalidBytecode = new ObservableBoolean(false);
     private final ObservableBoolean verifyAnonymousClasses = new ObservableBoolean(false);
     private final ObservableBoolean ternaryConstantSimplification = new ObservableBoolean(false);

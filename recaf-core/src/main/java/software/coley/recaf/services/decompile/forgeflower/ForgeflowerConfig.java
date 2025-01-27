@@ -51,7 +51,8 @@ public class ForgeflowerConfig extends BaseDecompilerConfig {
     private final ObservableBoolean fdi = new ObservableBoolean(true);
     private final ObservableBoolean inn = new ObservableBoolean(true);
     private final ObservableBoolean lac = new ObservableBoolean(false);
-    private final ObservableBoolean bsm = new ObservableBoolean(false);
+    // private final ObservableBoolean bsm = new ObservableBoolean(false);
+    private final ObservableBoolean bsm = new ObservableBoolean(true);
     private final ObservableBoolean iib = new ObservableBoolean(false);
     private final ObservableBoolean vac = new ObservableBoolean(false);
     private final ObservableBoolean crp = new ObservableBoolean(false);
@@ -73,7 +74,8 @@ public class ForgeflowerConfig extends BaseDecompilerConfig {
     private final ObservableString ind = new ObservableString("   ");
     private final ObservableString ban = new ObservableString("// Recreated by Recaf (powered by ForgeFlower decompiler)\n");
     private final ObservableBoolean __unit_test_mode__ = new ObservableBoolean(false);
-    private final ObservableBoolean __dump_original_lines__ = new ObservableBoolean(false);
+    // private final ObservableBoolean __dump_original_lines__ = new ObservableBoolean(false);
+    private final ObservableBoolean __dump_original_lines__ = new ObservableBoolean(true);
     private final ObservableBoolean jvn = new ObservableBoolean(false);
     private final ObservableBoolean jpr = new ObservableBoolean(false);
     private final ObservableBoolean sef = new ObservableBoolean(false);
