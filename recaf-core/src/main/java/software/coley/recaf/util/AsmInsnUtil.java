@@ -1,17 +1,20 @@
 package software.coley.recaf.util;
 
 import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.IntInsnNode;
 import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
+import org.objectweb.asm.tree.LocalVariableNode;
 import org.objectweb.asm.tree.LookupSwitchInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -143,6 +146,57 @@ public class AsmInsnUtil implements Opcodes {
 	}
 
 	/**
+	 * Checks in the given method for local vars that have label references
+	 * that do not exist in the method's instructions list.
+	 *
+	 * @param method
+	 * 		Method to fix local variables of.
+	 */
+	public static void fixMissingVariableLabels(@Nonnull MethodNode method) {
+		// Must not be abstract
+		InsnList instructions = method.instructions;
+		if (instructions == null)
+			return;
+
+		// Must have variables to fix
+		List<LocalVariableNode> variables = method.localVariables;
+		if (variables == null)
+			return;
+
+		// Find or create first/last labels
+		LabelNode firstLabel = null;
+		LabelNode lastLabel = null;
+		for (int i = 0; i < instructions.size(); i++)
+			if (instructions.get(i) instanceof LabelNode label) {
+				firstLabel = label;
+				break;
+			}
+		for (int i = instructions.size() - 1; i >= 0; i--)
+			if (instructions.get(i) instanceof LabelNode label) {
+				lastLabel = label;
+				break;
+			}
+		if (firstLabel == null)
+			instructions.insert(firstLabel = new LabelNode());
+		if (lastLabel == null || lastLabel == firstLabel)
+			instructions.add(lastLabel = new LabelNode());
+
+		// Find any variables that have invalid labels and reassign them if needed
+		for (LocalVariableNode variable : variables) {
+			int start = instructions.indexOf(variable.start);
+			int end = instructions.indexOf(variable.end);
+
+			// Variable start must be a valid label in the method, and occur before the end label
+			if (start < 0 || start > end)
+				variable.start = firstLabel;
+
+			// End label must be a valid label in the method
+			if (end < 0)
+				variable.end = lastLabel;
+		}
+	}
+
+	/**
 	 * @param insn
 	 * 		Instruction to check.
 	 *
@@ -151,6 +205,19 @@ public class AsmInsnUtil implements Opcodes {
 	public static boolean isConstValue(@Nonnull AbstractInsnNode insn) {
 		int op = insn.getOpcode();
 		return op >= ACONST_NULL && op <= LDC;
+	}
+
+	/**
+	 * @param insn
+	 * 		Instruction to check.
+	 *
+	 * @return {@code true} if the instruction pushes a constant {@code int} value onto the stack.
+	 */
+	public static boolean isConstIntValue(@Nonnull AbstractInsnNode insn) {
+		int op = insn.getOpcode();
+		if (op == LDC && ((LdcInsnNode) insn).cst instanceof Integer)
+			return true;
+		return (op >= ICONST_M1 && op <= ICONST_5) || op == SIPUSH || op == BIPUSH;
 	}
 
 	/**
@@ -311,6 +378,85 @@ public class AsmInsnUtil implements Opcodes {
 				type == AbstractInsnNode.TABLESWITCH_INSN ||
 				type == AbstractInsnNode.LOOKUPSWITCH_INSN ||
 				insn.getOpcode() == ATHROW || insn.getOpcode() == RET;
+	}
+
+	/**
+	 * Any instruction that is matched by this should be safe to use as the last instruction in a method.
+	 * If the last instruction in a method yields {@code false} then there is dangling control flow and
+	 * the code is not verifier compatible.
+	 *
+	 * @param op
+	 * 		Instruction opcode.
+	 *
+	 * @return {@code true} when the opcode represents an instruction that
+	 * terminates the method flow, or consistently takes a branch.
+	 */
+	public static boolean isTerminalOrAlwaysTakeFlowControl(int op) {
+		return switch (op) {
+			case IRETURN, LRETURN, FRETURN, DRETURN, ARETURN, RETURN, ATHROW, GOTO -> true;
+			default -> false;
+		};
+	}
+
+	/**
+	 * @param insn
+	 * 		Instruction to check.
+	 *
+	 * @return {@code true} if the instruction represents metadata such as line numbers, stack frames, or a label/offset.
+	 */
+	public static boolean isMetaData(@Nonnull AbstractInsnNode insn) {
+		// The following instruction types set their opcode as '-1'
+		// - FrameNode
+		// - LabelNode
+		// - LineNumberNode
+		return insn.getOpcode() == -1;
+	}
+
+	/**
+	 * @param insn
+	 * 		Instruction to begin from.
+	 *
+	 * @return Next non-metadata instruction.
+	 * Can be {@code null} for no next instruction at the end of a method.
+	 */
+	@Nullable
+	public static AbstractInsnNode getNextInsn(@Nonnull AbstractInsnNode insn) {
+		AbstractInsnNode next = insn.getNext();
+		while (next != null && isMetaData(next))
+			next = next.getNext();
+		return next;
+	}
+
+	/**
+	 * @param insn
+	 * 		Instruction to begin from.
+	 *
+	 * @return Previous non-metadata instruction.
+	 * Can be {@code null} for no previous instruction at the start of a method.
+	 */
+	@Nullable
+	public static AbstractInsnNode getPreviousInsn(@Nonnull AbstractInsnNode insn) {
+		AbstractInsnNode prev = insn.getPrevious();
+		while (prev != null && isMetaData(prev))
+			prev = prev.getPrevious();
+		return prev;
+	}
+
+	/**
+	 * @param insn
+	 * 		Instruction to begin from.
+	 *
+	 * @return Next non-metadata instruction, following {@link Opcodes#GOTO} if found.
+	 * Can be {@code null} for no next instruction at the end of a method.
+	 */
+	@Nullable
+	public static AbstractInsnNode getNextFollowGoto(@Nonnull AbstractInsnNode insn) {
+		AbstractInsnNode next = getNextInsn(insn);
+		while (next != null && next.getOpcode() == GOTO) {
+			JumpInsnNode jin = (JumpInsnNode) next;
+			next = getNextInsn(jin.label);
+		}
+		return next;
 	}
 
 	/**
