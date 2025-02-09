@@ -46,11 +46,11 @@ public class WorkspaceLoadingDropListener implements FileDropListener {
 		// Sanity check input
 		if (files.isEmpty()) return;
 
-		if (config.createOnDragDrop()) {
+		if (config.createOnDragDrop() || !workspaceManager.hasCurrentWorkspace()) {
 			// Create new workspace from files
 			//  - The last path is actually the first file selected by the user when multiple files are selected
 			Path primary = files.getLast();
-			List<Path> supporting = files.size() > 1 ? files.subList(1, files.size()) : Collections.emptyList();
+			List<Path> supporting = files.size() > 1 ? files.subList(0, files.size() - 1) : Collections.emptyList();
 			pathLoadingManager.asyncNewWorkspace(primary, supporting, err -> {
 				logger.error("Failed to create new workspace from dropped files", err);
 			});
