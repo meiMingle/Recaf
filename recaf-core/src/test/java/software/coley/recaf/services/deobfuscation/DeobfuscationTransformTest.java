@@ -33,8 +33,10 @@ import software.coley.recaf.services.deobfuscation.transform.generic.IllegalVara
 import software.coley.recaf.services.deobfuscation.transform.generic.LinearOpaqueConstantFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.OpaquePredicateFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.RedundantTryCatchRemovingTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.StackOperationFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.StaticValueCollectionTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.StaticValueInliningTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.VariableFoldingTransformer;
 import software.coley.recaf.services.transform.JvmClassTransformer;
 import software.coley.recaf.services.transform.JvmTransformResult;
 import software.coley.recaf.services.transform.TransformationApplier;
@@ -844,6 +846,209 @@ class DeobfuscationTransformTest extends TestBase {
 		}
 
 		@Test
+		void foldTableSwitchOfUnknownParameterIfIsEffectiveGoto() {
+			String asm = """
+					.method public static example (I)V {
+						parameters: { key },
+					    code: {
+					    A:
+					        iload key
+					        tableswitch {
+					            min: 0,
+					            max: 2,
+					            cases: { D, D, D },
+					            default: D
+					        }
+					    B:
+					        aconst_null
+					        athrow
+					    C:
+					        aconst_null
+					        athrow
+					    D:
+					        return
+					    E:
+					        aconst_null
+					        dup
+					        pop
+					        athrow
+					    }
+					}
+					""";
+			validateAfterAssembly(asm, List.of(OpaquePredicateFoldingTransformer.class), dis -> {
+				// Switch should be replaced with a single goto
+				assertEquals(0, StringUtil.count("iload key", dis), "Expected to remove tableswitch argument");
+				assertEquals(0, StringUtil.count("tableswitch", dis), "Expected to remove tableswitch");
+				assertEquals(1, StringUtil.count("goto B", dis), "Expected to replace tableswitch <target> with goto <target>");
+
+				// Dead code should be removed
+				assertEquals(0, StringUtil.count("aconst_null", dis), "Expected to remove dead aconst_null");
+				assertEquals(0, StringUtil.count("athrow", dis), "Expected to remove dead athrow");
+				assertEquals(0, StringUtil.count("pop", dis), "Expected to remove dead athrow");
+			});
+		}
+
+		/** Showcase pairing of {@link VariableFoldingTransformer} with {@link StackOperationFoldingTransformer} */
+		@Test
+		void foldVar() {
+			String asm = """
+					.method public static example ()I {
+					    code: {
+					    A:
+					        iconst_0
+					        istore zero
+					        bipush 50
+					        istore unused0
+					        bipush 51
+					        istore unused1
+					        bipush 52
+					        istore unused2
+					        bipush 53
+					        istore unused3
+					        bipush 54
+					        istore unused4
+					    B:
+					        iload zero
+					        ireturn
+					    C:
+					    }
+					}
+					""";
+			validateAfterAssembly(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class), dis -> {
+				assertEquals(0, StringUtil.count("istore unused", dis), "Expected to remove variable stores where no reads are used");
+				assertEquals(0, StringUtil.count("bipush", dis), "Expected to remove unused value pushes of variables");
+				assertEquals(0, StringUtil.count("zero", dis), "Expected to inline 'zero' variable");
+			});
+		}
+
+		/** Chose case {@link VariableFoldingTransformer} along with other flow-based cleanup transformers. */
+		@Test
+		void foldVarAndFlow() {
+			String asm = """
+					.method public static example ()I {
+					    code: {
+					    A:
+					        iconst_m1
+					        istore foo
+					        iconst_0
+					        istore foo
+					    B:
+					        iload foo
+					        ifeq C
+					        iload foo
+					        ireturn
+					    C:
+					        iload foo
+					        ireturn
+					    D:
+					    }
+					}
+					""";
+			validateAfterAssembly(asm, List.of(
+					VariableFoldingTransformer.class,
+					OpaquePredicateFoldingTransformer.class,
+					StackOperationFoldingTransformer.class,
+					GotoInliningTransformer.class
+			), dis -> {
+				assertEquals(1, StringUtil.count("iconst", dis), "Expected only one const");
+				assertEquals(1, StringUtil.count("ireturn", dis), "Expected only one return");
+				assertEquals(0, StringUtil.count("ifeq", dis), "Expected to fold opaque ifeq");
+				assertEquals(0, StringUtil.count("foo", dis), "Expected to fold redundant variable declaration");
+			});
+		}
+
+		/** Show {@link VariableFoldingTransformer} can inline when parameters are effectively unused/overwritten */
+		@Test
+		void foldVarsOfOverwrittenParameters() {
+			String asm = """
+					.method public static example (II)I {
+						parameters: { a, b },
+					    code: {
+					    A:
+					        iconst_0
+					        istore a
+					        iconst_0
+					        istore b
+					    B:
+					        iload a
+					        iload b
+					        iadd
+					        ireturn
+					    C:
+					    }
+					}
+					""";
+			validateAfterAssembly(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class,
+					LinearOpaqueConstantFoldingTransformer.class), dis -> {
+				assertEquals(0, StringUtil.count("istore", dis), "Expected to remove redundant istore");
+				assertEquals(0, StringUtil.count("iload", dis), "Expected to inline redundant iload");
+				assertEquals(1, StringUtil.count("iconst_0", dis), "Expected to have single iconst_0");
+			});
+		}
+
+		/** Show {@link VariableFoldingTransformer} isn't too aggressive */
+		@Test
+		void dontFoldVarsOfUsedParameters() {
+			String asm = """
+					.method public static example (II)I {
+						parameters: { a, b },
+					    code: {
+					    A:
+					        iconst_0
+					        istore c
+					    B:
+					        iload a
+					        iload b
+					        iadd
+					        istore c
+					    C:
+					        sipush 1000
+					        iload c
+					        if_icmpge B
+					    D:
+					        iload c
+					        ireturn
+					    E:
+					    }
+					}
+					""";
+			validateNoTransformation(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class));
+		}
+
+		/** Show {@link VariableFoldingTransformer} isn't too aggressive */
+		@Test
+		void dontFoldVarsOfUsedButOverwrittenParameters() {
+			String asm = """
+					.method public static example (II)I {
+						parameters: { a, b },
+					    code: {
+					    A:
+					        iconst_0
+					        istore c
+					    B:
+					        iload a
+					        iload b
+					        iadd
+					        istore c
+					    C:
+					        sipush 1000
+					        iload c
+					        if_icmpge B
+					    D:
+					        iconst_1
+					        istore a
+					        iconst_1
+					        istore b
+					        iload c
+					        ireturn
+					    E:
+					    }
+					}
+					""";
+			validateNoTransformation(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class));
+		}
+
+		@Test
 		void foldOpaquePredicateAlsoRemovesTryCatchesThatAreNowDeadCode() {
 			String asm = """
 					.method example ()V {
@@ -873,6 +1078,26 @@ class DeobfuscationTransformTest extends TestBase {
 					""";
 			validateAfterAssembly(asm, List.of(OpaquePredicateFoldingTransformer.class, DeadCodeRemovingTransformer.class), dis -> {
 				assertEquals(0, StringUtil.count("exceptions:", dis), "Try-catch blocks should have been removed");
+			});
+		}
+
+		/** Simple case used to cover base case in transformer impl */
+		@Test
+		void foldImmediateGotoNext() {
+			String asm = """
+					.method public static example ()V {
+					    code: {
+					    A:
+					        goto B
+					    B:
+					        return
+					    C:
+					    }
+					}
+					""";
+			validateAfterAssembly(asm, List.of(GotoInliningTransformer.class), dis -> {
+				assertEquals(0, StringUtil.count("goto", dis), "Expected to replace all goto <target> with inlining");
+				assertEquals(0, StringUtil.count("C:", dis), "Expected to simplify out 'C' label, only two labels needed in this example after inlining");
 			});
 		}
 
@@ -993,6 +1218,47 @@ class DeobfuscationTransformTest extends TestBase {
 		}
 
 		@Test
+		void doNotFoldGotoCycle() {
+			String asm = """
+					.method public static example ()V {
+					    code: {
+					    A:
+					        goto A
+					    B:
+					    }
+					}
+					""";
+			validateNoTransformation(asm, List.of(GotoInliningTransformer.class));
+		}
+
+		@Test
+		void doNotFoldGotoOfTransitionBlockCycle() {
+			String asm = """
+					.method public static example ()V {
+					    code: {
+					    A:
+					        iconst_1
+					        pop
+					        // block "A" naturally flows into block "B"
+					    B:
+					        iconst_2
+					        pop
+					        // block "B" naturally flows into block "C"
+					    C:
+					        iconst_3
+					        ifne D
+					        // We should not inline block "B" here because "A" --> "B" would be broken if we did that.
+					        goto B
+					    D:
+					        return
+					    E:
+					    }
+					}
+					""";
+			validateNoTransformation(asm, List.of(GotoInliningTransformer.class));
+		}
+
+		@Test
 		void doNotFoldGotoInsideTryRangeWithCodeOutsideOfTryRange() {
 			// Because this would technically be a behavior change (unless we do lots of more analysis)
 			// we do not inline goto instructions that span the boundaries of try-catch.
@@ -1053,7 +1319,7 @@ class DeobfuscationTransformTest extends TestBase {
 	@Nested
 	class Regressions {
 		@Test
-		void gotoInlining1() {
+		void gotoInlining1a() {
 			String asm = """
 					.method static example ([I)V {
 					    parameters: { array },
@@ -1093,7 +1359,6 @@ class DeobfuscationTransformTest extends TestBase {
 					        iinc i 1
 					        goto W
 					    N:
-					        line 76
 					        getstatic java/lang/System.out Ljava/io/PrintStream;
 					        invokevirtual java/io/PrintStream.println ()V
 					    O:
@@ -1126,6 +1391,52 @@ class DeobfuscationTransformTest extends TestBase {
 					        invokespecial java/lang/StringBuilder.<init> ()V
 					        goto B
 					    Y:
+					    }
+					}
+					""";
+			validateAfterAssembly(asm, List.of(GotoInliningTransformer.class, DeadCodeRemovingTransformer.class), dis -> {
+				assertEquals(1, StringUtil.count("goto", dis), "Only one goto should remain (the while loop handler)");
+			});
+		}
+
+		/** The same as {@link #gotoInlining1a()} but starting from an easier step. */
+		@Test
+		void gotoInlining1b() {
+			String asm = """
+					.method static example ([I)V {
+					    parameters: { array },
+					    code: {
+							  A:
+					              goto C
+					          B:
+					              getstatic java/lang/System.out Ljava/io/PrintStream;
+					              invokevirtual java/io/PrintStream.println ()V
+					              return
+					          C:
+					              aload array
+					              arraylength
+					              istore length
+					              iconst_0
+					              istore i
+					          D:
+					              iload i1
+					              iload i2
+					              if_icmpge B
+					              getstatic java/lang/System.out Ljava/io/PrintStream;
+					              new java/lang/StringBuilder
+					              dup
+					              invokespecial java/lang/StringBuilder.<init> ()V
+					              aload array
+					              iload i1
+					              iaload
+					              invokevirtual java/lang/StringBuilder.append (I)Ljava/lang/StringBuilder;
+					              ldc " "
+					              invokevirtual java/lang/StringBuilder.append (Ljava/lang/String;)Ljava/lang/StringBuilder;
+					              invokevirtual java/lang/StringBuilder.toString ()Ljava/lang/String;
+					              invokevirtual java/io/PrintStream.print (Ljava/lang/String;)V
+					              iinc i1 1
+					              goto D
+					          E:
 					    }
 					}
 					""";

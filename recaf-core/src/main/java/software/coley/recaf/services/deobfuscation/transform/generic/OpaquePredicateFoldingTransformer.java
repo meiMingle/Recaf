@@ -34,6 +34,8 @@ import java.util.function.Predicate;
 
 import static org.objectweb.asm.Opcodes.*;
 import static software.coley.recaf.services.deobfuscation.transform.generic.LinearOpaqueConstantFoldingTransformer.isSupportedValueProducer;
+import static software.coley.recaf.util.AsmInsnUtil.isFlowControl;
+import static software.coley.recaf.util.AsmInsnUtil.isSwitchEffectiveGoto;
 
 /**
  * A transformer that folds opaque predicates into single-path control flows.
@@ -68,13 +70,49 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 		ClassNode node = context.getNode(bundle, initialClassState);
 		for (MethodNode method : node.methods) {
 			InsnList instructions = method.instructions;
+
+			// Skip if method is abstract.
 			if (instructions == null)
 				continue;
+
+			// Some obfuscators will use 'switch' instructions with all labels being the same in order to
+			// recreate the behavior of 'goto'. We will just replace these if we see them.
+			// We do this in a pre-pass here since we end up inserting an additional 'POP' for any matched switch.
+			for (int i = 1; i < instructions.size() - 1; i++) {
+				AbstractInsnNode instruction = instructions.get(i);
+				if (instruction instanceof TableSwitchInsnNode switchInsn && isSwitchEffectiveGoto(switchInsn)) {
+					AbstractInsnNode previous = switchInsn.getPrevious();
+					if (isSupportedValueProducer(previous))
+						instructions.remove(previous);
+					else
+						instructions.insertBefore(switchInsn, new InsnNode(POP));
+					instructions.set(switchInsn, new JumpInsnNode(GOTO, switchInsn.dflt));
+					dirty = true;
+				} else if (instruction instanceof LookupSwitchInsnNode switchInsn && isSwitchEffectiveGoto(switchInsn)) {
+					AbstractInsnNode previous = switchInsn.getPrevious();
+					if (isSupportedValueProducer(previous))
+						instructions.remove(previous);
+					else
+						instructions.insertBefore(switchInsn, new InsnNode(POP));
+					instructions.set(switchInsn, new JumpInsnNode(GOTO, switchInsn.dflt));
+					dirty = true;
+				}
+			}
+
 			try {
 				boolean localDirty = false;
 				Frame<ReValue>[] frames = context.analyze(inheritanceGraph, node, method);
 				for (int i = 1; i < instructions.size() - 1; i++) {
+					AbstractInsnNode instruction = instructions.get(i);
+
+					// Skip if this isn't a control flow instruction.
+					// We are only flattening control flow here.
+					if (!isFlowControl(instruction))
+						continue;
+
 					// Skip if there is no frame for this instruction.
+					if (i >= frames.length)
+						continue; // Can happen if there is dead code at the end
 					Frame<ReValue> frame = frames[i];
 					if (frame == null || frame.getStackSize() == 0)
 						continue;
@@ -92,7 +130,6 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 
 					// Handle any control flow instruction and see if we know based on the frame contents if a specific
 					// path is always taken.
-					AbstractInsnNode instruction = instructions.get(i);
 					int insnType = instruction.getType();
 					if (insnType == AbstractInsnNode.JUMP_INSN) {
 						JumpInsnNode jin = (JumpInsnNode) instruction;

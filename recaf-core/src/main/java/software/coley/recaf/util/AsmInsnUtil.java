@@ -83,10 +83,8 @@ public class AsmInsnUtil implements Opcodes {
 	 */
 	public static int indexOf(@Nonnull AbstractInsnNode insn) {
 		int i = 0;
-		while (insn != null) {
-			insn = insn.getPrevious();
+		while ((insn = insn.getPrevious()) != null)
 			i++;
-		}
 		return i;
 	}
 
@@ -105,6 +103,26 @@ public class AsmInsnUtil implements Opcodes {
 			case Opcodes.DSTORE, Opcodes.DLOAD -> Type.DOUBLE_TYPE;
 			default -> Types.OBJECT_TYPE;
 		};
+	}
+
+	/**
+	 * @param op
+	 * 		Instruction opcode.
+	 *
+	 * @return {@code true} when it is any variable storing instruction.
+	 */
+	public static boolean isVarStore(int op) {
+		return op >= ISTORE && op <= ASTORE;
+	}
+
+	/**
+	 * @param op
+	 * 		Instruction opcode.
+	 *
+	 * @return {@code true} when it is any variable loading instruction.
+	 */
+	public static boolean isVarLoad(int op) {
+		return op >= ILOAD && op <= ALOAD;
 	}
 
 	/**
@@ -393,9 +411,37 @@ public class AsmInsnUtil implements Opcodes {
 	 */
 	public static boolean isTerminalOrAlwaysTakeFlowControl(int op) {
 		return switch (op) {
-			case IRETURN, LRETURN, FRETURN, DRETURN, ARETURN, RETURN, ATHROW, GOTO -> true;
+			case IRETURN, LRETURN, FRETURN, DRETURN, ARETURN, RETURN, ATHROW, TABLESWITCH, LOOKUPSWITCH, GOTO -> true;
 			default -> false;
 		};
+	}
+
+	/**
+	 * @param switchInsn
+	 * 		Switch instruction.
+	 *
+	 * @return {@code true} when all destinations are identical.
+	 */
+	public static boolean isSwitchEffectiveGoto(@Nonnull TableSwitchInsnNode switchInsn) {
+		LabelNode target = switchInsn.dflt;
+		for (LabelNode label : switchInsn.labels)
+			if (label != target)
+				return false;
+		return true;
+	}
+
+	/**
+	 * @param switchInsn
+	 * 		Switch instruction.
+	 *
+	 * @return {@code true} when all destinations are identical.
+	 */
+	public static boolean isSwitchEffectiveGoto(@Nonnull LookupSwitchInsnNode switchInsn) {
+		LabelNode target = switchInsn.dflt;
+		for (LabelNode label : switchInsn.labels)
+			if (label != target)
+				return false;
+		return true;
 	}
 
 	/**
