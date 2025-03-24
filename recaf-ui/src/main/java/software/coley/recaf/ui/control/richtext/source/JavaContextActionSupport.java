@@ -316,7 +316,7 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 
 			// Parse the current source
 			long start = System.currentTimeMillis();
-			String classNameEsc = EscapeUtil.escapeAll(className);
+			String classNameEsc = EscapeUtil.escapeStandardAndUnicodeWhitespace(className);
 			logger.debugging(l -> l.info("Starting AST parse..."));
 			try {
 				CompilationUnitModel resultingUnit = parser.parse(text);
@@ -330,6 +330,7 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 				} else {
 					unit = resultingUnit;
 					resolver = astService.newJavaResolver(workspace, resultingUnit);
+					resolver.setClassContext(getPath().getValue());
 
 					logger.debugging(l -> l.info("AST parsed successfully, took {}ms", diffMs));
 					astAvailabilityButton.setAvailable();

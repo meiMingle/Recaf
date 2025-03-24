@@ -2,6 +2,7 @@ package software.coley.recaf.services.source;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
+import software.coley.recaf.info.ClassInfo;
 import software.coley.recaf.path.ClassMemberPathNode;
 import software.coley.recaf.path.ClassPathNode;
 import software.coley.recaf.path.DirectoryPathNode;
@@ -16,6 +17,7 @@ import software.coley.sourcesolver.model.Model;
 import software.coley.sourcesolver.model.TypeModel;
 import software.coley.sourcesolver.model.VariableModel;
 import software.coley.sourcesolver.resolve.BasicResolver;
+import software.coley.sourcesolver.resolve.entry.ClassEntry;
 import software.coley.sourcesolver.resolve.entry.ClassMemberPair;
 import software.coley.sourcesolver.resolve.entry.EntryPool;
 import software.coley.sourcesolver.resolve.entry.FieldEntry;
@@ -53,6 +55,19 @@ public class ResolverAdapter extends BasicResolver {
 	}
 
 	/**
+	 * Marks the declared class in the compilation unit as being resolved to the given class.
+	 *
+	 * @param cls
+	 * 		Class that represents the code outlined by the compilation unit.
+	 */
+	public void setClassContext(@Nonnull ClassInfo cls) {
+		ClassModel model = getUnit().getDeclaredClasses().getFirst();
+		ClassEntry entry = getPool().getClass(cls.getName());
+		if (model != null && entry != null)
+			setDeclaredClass(model, entry);
+	}
+
+	/**
 	 * @param position
 	 * 		Absolute position in the source code of the item we want to resolve.
 	 *
@@ -74,9 +89,6 @@ public class ResolverAdapter extends BasicResolver {
 				break;
 			}
 		}
-
-		// TODO: If we get an unknown resolution, do we want to try the next parent up?
-		//  - Would mimic our behavior from before
 
 		// Resolve the content at the given position then adapt it.
 		Resolution resolution = resolveAt(position, model);

@@ -69,6 +69,7 @@ menu.refactor.rename=Rename
 menu.search=Search
 menu.search.string=Strings
 menu.search.number=Numbers
+menu.search.class.member-declarations=Member declarations
 menu.search.class.member-references=Member references
 menu.search.class.type-references=Type references
 menu.search.method-overrides=Method overrides
@@ -138,6 +139,7 @@ bind.editor.rename=Rename
 bind.editor.replace=Replace
 bind.editor.save=Save
 bind.quicknav=Quick nav
+bind.workspace.export=Export workspace
 
 ##### Dialog texts
 dialog.cancel=Cancel
@@ -785,6 +787,7 @@ service.decompile.impl.decompiler-procyon-config.forcedCompilerTarget=Target lan
 service.decompile.impl.decompiler-procyon-config.includeErrorDiagnostics=Include error diagnostics
 service.decompile.impl.decompiler-procyon-config.includeLineNumbersInBytecode=Show debug line numbers (bytecode)
 service.decompile.impl.decompiler-procyon-config.isUnicodeOutputEnabled=Enable unicode in output
+service.decompile.impl.decompiler-procyon-config.languageTarget=Language target
 service.decompile.impl.decompiler-procyon-config.mergeVariables=Merge variables when possible
 service.decompile.impl.decompiler-procyon-config.retainPointlessSwitches=Retain useless switches
 service.decompile.impl.decompiler-procyon-config.retainRedundantCasts=Retain useless casts

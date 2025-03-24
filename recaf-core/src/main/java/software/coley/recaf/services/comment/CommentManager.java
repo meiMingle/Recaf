@@ -1,13 +1,14 @@
 package software.coley.recaf.services.comment;
 
 import com.google.gson.Gson;
+import com.google.gson.TypeAdapter;
+import com.google.gson.TypeAdapterFactory;
 import com.google.gson.reflect.TypeToken;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.davidmoten.text.utils.WordWrap;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.slf4j.Logger;
@@ -27,13 +28,16 @@ import software.coley.recaf.services.decompile.filter.JvmBytecodeFilter;
 import software.coley.recaf.services.decompile.filter.OutputTextFilter;
 import software.coley.recaf.services.file.RecafDirectoriesConfig;
 import software.coley.recaf.services.json.GsonProvider;
-import software.coley.recaf.services.mapping.*;
+import software.coley.recaf.services.mapping.BasicMappingsRemapper;
+import software.coley.recaf.services.mapping.MappingApplicationListener;
+import software.coley.recaf.services.mapping.MappingListeners;
+import software.coley.recaf.services.mapping.MappingResults;
+import software.coley.recaf.services.mapping.Mappings;
 import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.util.StringUtil;
 import software.coley.recaf.util.TestEnvironment;
 import software.coley.recaf.workspace.model.Workspace;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -175,12 +179,8 @@ public class CommentManager implements Service, CommentUpdateListener, CommentCo
 							replacement = "";
 						} else {
 							int wordWrapLimit = config.getWordWrappingLimit().getValue();
-							if (comment.length() > wordWrapLimit) {
-								comment = WordWrap.from(comment)
-										.breakWords(false)
-										.maxWidth(wordWrapLimit)
-										.wrap();
-							}
+							if (comment.length() > wordWrapLimit)
+								comment = StringUtil.wordWrap(comment, wordWrapLimit);
 
 							if (comment.contains("\n")) {
 								// The calculated indent includes the '\n' so we can just for-each the comment lines and prefix it.
@@ -285,6 +285,19 @@ public class CommentManager implements Service, CommentUpdateListener, CommentCo
 			@Override
 			public void onPostApply(@Nonnull MappingResults mappingResults) {
 				// no-op
+			}
+		});
+
+		// Register serialization support for the persistent comment models.
+		gsonProvider.addTypeAdapterFactory(new TypeAdapterFactory() {
+			@Override
+			@SuppressWarnings("unchecked")
+			public <T> TypeAdapter<T> create(@Nonnull Gson gson, @Nonnull TypeToken<T> type) {
+				if (WorkspaceComments.class.equals(type.getRawType()))
+					return (TypeAdapter<T>) gson.getAdapter(PersistWorkspaceComments.class);
+				else if (ClassComments.class.equals(type.getRawType()))
+					return (TypeAdapter<T>) gson.getAdapter(PersistClassComments.class);
+				return null;
 			}
 		});
 	}

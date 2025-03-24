@@ -1,16 +1,17 @@
 package software.coley.recaf.services.json;
 
-import com.google.gson.*;
-import com.google.gson.reflect.TypeToken;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.InstanceCreator;
+import com.google.gson.JsonDeserializer;
+import com.google.gson.JsonSerializer;
+import com.google.gson.TypeAdapter;
+import com.google.gson.TypeAdapterFactory;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import software.coley.recaf.services.Service;
-import software.coley.recaf.services.comment.ClassComments;
-import software.coley.recaf.services.comment.PersistClassComments;
-import software.coley.recaf.services.comment.PersistWorkspaceComments;
-import software.coley.recaf.services.comment.WorkspaceComments;
 
 import java.lang.reflect.Type;
 import java.util.function.Consumer;
@@ -30,21 +31,6 @@ public class GsonProvider implements Service {
 	@Inject
 	public GsonProvider(@Nonnull GsonProviderConfig config) {
 		this.config = config;
-
-		// Initialize gson state with custom type adapters.
-		updateBuilder(builder -> {
-			builder.registerTypeAdapterFactory(new TypeAdapterFactory() {
-				@Override
-				@SuppressWarnings("unchecked")
-				public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
-					if (WorkspaceComments.class.equals(type.getRawType()))
-						return (TypeAdapter<T>) gson.getAdapter(PersistWorkspaceComments.class);
-					else if (ClassComments.class.equals(type.getRawType()))
-						return (TypeAdapter<T>) gson.getAdapter(PersistClassComments.class);
-					return null;
-				}
-			});
-		});
 	}
 
 	/**
@@ -61,6 +47,19 @@ public class GsonProvider implements Service {
 			copy.setPrettyPrinting();
 
 		return copy.create();
+	}
+
+	/**
+	 * Register a type adapter factory for application-wide (de)serialization support
+	 * for supported types from the factory.
+	 *
+	 * @param factory
+	 * 		Adapter factory to register.
+	 *
+	 * @see GsonBuilder#registerTypeAdapterFactory(TypeAdapterFactory)
+	 */
+	public void addTypeAdapterFactory(@Nonnull TypeAdapterFactory factory) {
+		updateBuilder(builder -> builder.registerTypeAdapterFactory(factory));
 	}
 
 	/**
@@ -91,7 +90,7 @@ public class GsonProvider implements Service {
 	 *
 	 * @see GsonBuilder#registerTypeAdapter(Type, Object)
 	 */
-	public <T> void addTypeInstanceCreator(@Nonnull Class<T> type, @Nonnull InstanceCreator<T> creator) {
+	public <T> void addTypeInstanceCreator(@Nonnull Class<? extends T> type, @Nonnull InstanceCreator<? extends T> creator) {
 		register(type, creator);
 	}
 
@@ -107,7 +106,7 @@ public class GsonProvider implements Service {
 	 *
 	 * @see GsonBuilder#registerTypeAdapter(Type, Object)
 	 */
-	public <T> void addTypeDeserializer(@Nonnull Class<T> type, @Nonnull JsonDeserializer<T> deserializer) {
+	public <T> void addTypeDeserializer(@Nonnull Class<? extends T> type, @Nonnull JsonDeserializer<? extends T> deserializer) {
 		register(type, deserializer);
 	}
 
@@ -116,6 +115,7 @@ public class GsonProvider implements Service {
 	 *
 	 * @param type
 	 * 		Type definition for the type serializer being registered.
+	 * 		This type must be the exact-intended type. When a subtype is serialized this will not be used.
 	 * @param serializer
 	 * 		Serializer implementation for the given type.
 	 * @param <T>
@@ -123,7 +123,7 @@ public class GsonProvider implements Service {
 	 *
 	 * @see GsonBuilder#registerTypeAdapter(Type, Object)
 	 */
-	public <T> void addTypeSerializer(@Nonnull Class<T> type, @Nonnull JsonSerializer<T> serializer) {
+	public <T> void addTypeSerializer(@Nonnull Class<? extends T> type, @Nonnull JsonSerializer<? extends T> serializer) {
 		register(type, serializer);
 	}
 

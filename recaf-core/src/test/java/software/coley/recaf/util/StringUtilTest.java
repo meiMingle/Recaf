@@ -103,6 +103,14 @@ class StringUtilTest {
 	}
 
 	@Test
+	void testCutOff() {
+		assertEquals("", StringUtil.cutOff("", 0));
+		assertEquals("", StringUtil.cutOff("", 1));
+		assertEquals("", StringUtil.cutOff("abcdefgd", 0));
+		assertEquals("abc", StringUtil.cutOff("abcdefg", 3));
+	}
+
+	@Test
 	void testCutOffAtFirst() {
 		// chars
 		assertEquals("", StringUtil.cutOffAtFirst("", 'd'));
@@ -323,6 +331,20 @@ class StringUtilTest {
 	void testFillRight() {
 		assertEquals("baaa", StringUtil.fillRight(4, "a", "b"));
 		assertEquals("aaaa", StringUtil.fillRight(4, "a", null));
+	}
+
+	@Test
+	void testWordWrap() {
+		String text = assertDoesNotThrow(() -> Files.readString(Paths.get("src/testFixtures/resources/lorem-long-ascii.txt")));
+		int[] lengths = new int[] {25, 50, 75, 100, 200};
+		for (int length : lengths) {
+			String wrapped = StringUtil.wordWrap(text, length);
+			assertNotEquals(wrapped, text);
+
+			String[] lines = wrapped.split("\n");
+			for (String line : lines)
+				assertTrue(line.length() <= length);
+		}
 	}
 
 	@Test

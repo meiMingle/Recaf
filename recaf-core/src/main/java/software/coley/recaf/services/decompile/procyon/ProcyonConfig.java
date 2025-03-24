@@ -3,6 +3,8 @@ package software.coley.recaf.services.decompile.procyon;
 import com.strobel.assembler.metadata.CompilerTarget;
 import com.strobel.decompiler.DecompilerSettings;
 import com.strobel.decompiler.languages.BytecodeOutputOptions;
+import com.strobel.decompiler.languages.Language;
+import com.strobel.decompiler.languages.Languages;
 import com.strobel.decompiler.languages.java.BraceEnforcement;
 import com.strobel.decompiler.languages.java.BraceStyle;
 import com.strobel.decompiler.languages.java.JavaFormattingOptions;
@@ -14,7 +16,6 @@ import software.coley.observables.ObservableBoolean;
 import software.coley.observables.ObservableInteger;
 import software.coley.observables.ObservableObject;
 import software.coley.recaf.config.BasicConfigValue;
-import software.coley.recaf.config.ConfigGroups;
 import software.coley.recaf.services.decompile.BaseDecompilerConfig;
 import software.coley.recaf.util.ExcludeFromJacocoGeneratedReport;
 
@@ -45,6 +46,9 @@ public class ProcyonConfig extends BaseDecompilerConfig {
 	private final ObservableBoolean arePreviewFeaturesEnabled = new ObservableBoolean(false);
 	private final ObservableInteger textBlockLineMinimum = new ObservableInteger(3);
 	private final ObservableObject<CompilerTarget> forcedCompilerTarget = new ObservableObject<>(null);
+	private final ObservableObject<BytecodeOutputOptions> bytecodeOutputOptions = new ObservableObject<>(BytecodeOutputOptions.createDefault());
+	private final ObservableObject<Language> languageTarget = new ObservableObject<>(Languages.java());
+
 	// private final ObservableObject<BytecodeOutputOptions> bytecodeOutputOptions = new ObservableObject<>(BytecodeOutputOptions.createDefault());
 	private final ObservableBoolean bytecodeOutputOptions_showTypeHeader = new ObservableBoolean(true);
 	private final ObservableBoolean bytecodeOutputOptions_showTypeAttributes = new ObservableBoolean(false);
@@ -201,6 +205,9 @@ public class ProcyonConfig extends BaseDecompilerConfig {
 		addValue(new BasicConfigValue<>("simplifyMemberReferences", boolean.class, simplifyMemberReferences));
 		addValue(new BasicConfigValue<>("arePreviewFeaturesEnabled", boolean.class, arePreviewFeaturesEnabled));
 		addValue(new BasicConfigValue<>("textBlockLineMinimum", int.class, textBlockLineMinimum));
+		addValue(new BasicConfigValue<>("forcedCompilerTarget", CompilerTarget.class, forcedCompilerTarget));
+		addValue(new BasicConfigValue<>("bytecodeOutputOptions", BytecodeOutputOptions.class, bytecodeOutputOptions));
+		addValue(new BasicConfigValue<>("languageTarget", Language.class, languageTarget));
 		// bytecodeOutputOptions
 		addValue(new BasicConfigValue<>("bytecodeOutputOptions.showTypeHeader", boolean.class,bytecodeOutputOptions_showTypeHeader));
 		addValue(new BasicConfigValue<>("bytecodeOutputOptions.showTypeAttributes", boolean.class,bytecodeOutputOptions_showTypeAttributes));
@@ -363,6 +370,8 @@ public class ProcyonConfig extends BaseDecompilerConfig {
 		decompilerSettings.setPreviewFeaturesEnabled(arePreviewFeaturesEnabled.getValue());
 		decompilerSettings.setTextBlockLineMinimum(textBlockLineMinimum.getValue());
 		decompilerSettings.setForcedCompilerTarget(forcedCompilerTarget.getValue());
+		decompilerSettings.setBytecodeOutputOptions(bytecodeOutputOptions.getValue());
+		decompilerSettings.setLanguage(languageTarget.getValue());
 
 		BytecodeOutputOptions bytecodeOutputOptions = BytecodeOutputOptions.createDefault();
 		bytecodeOutputOptions.showTypeHeader = bytecodeOutputOptions_showTypeHeader.getValue();
@@ -602,5 +611,10 @@ public class ProcyonConfig extends BaseDecompilerConfig {
 	@Nonnull
 	public ObservableBoolean getBytecodeOutputOptions_showLineNumbers() {
 		return bytecodeOutputOptions_showLineNumbers;
+	}
+
+	@Nonnull
+	public ObservableObject<Language> getLanguageTarget() {
+		return languageTarget;
 	}
 }

@@ -143,6 +143,31 @@ public interface ClassInfo extends Info, Annotated, Accessed, Named {
 	List<InnerClassInfo> getInnerClasses();
 
 	/**
+	 * Gets a named inner class by the local name.
+	 * Given the following example, you would pass {@code "Bar"} or even {@code "FizzBuzz"}:
+	 * <pre>{@code
+	 * class Foo {
+	 *     class Bar {
+	 *         class FizzBuzz {}
+	 *     }
+	 * }
+	 * }</pre>
+	 * Because anonymous inner classes do not have a name declared, they cannot be yielded here.
+	 *
+	 * @param innerName
+	 * 		Local name of inner class.
+	 *
+	 * @return Inner class of the matching name, or {@code null} if no such inner exists.
+	 */
+	@Nullable
+	default InnerClassInfo getInnerClassByInnerName(@Nonnull String innerName) {
+		for (InnerClassInfo innerClass : getInnerClasses())
+			if (innerName.equals(innerClass.getInnerName()))
+				return innerClass;
+		return null;
+	}
+
+	/**
 	 * @return {@code true} when this class is an inner class of another class.
 	 */
 	default boolean isInnerClass() {
