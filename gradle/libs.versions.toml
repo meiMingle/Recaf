@@ -145,8 +145,6 @@ fernflower = { module = "com.jetbrains.intellij.java:java-decompiler-engine", ve
 
 forgeflower = { module = "net.minecraftforge:forgeflower", version.ref = "forgeflower" }
 
-wordwrap = { module = "com.github.davidmoten:word-wrap", version.ref = "wordwrap" }
-
 sourcesolver = { module = "software.coley:source-solver", version.ref = "sourcesolver" }
 
 [bundles]
