@@ -12,6 +12,7 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.Tab;
+import javafx.scene.input.KeyEvent;
 import javafx.stage.Stage;
 import org.kordamp.ikonli.Ikon;
 import org.kordamp.ikonli.carbonicons.CarbonIcons;
@@ -57,6 +58,7 @@ import software.coley.recaf.services.mapping.MappingApplierService;
 import software.coley.recaf.services.mapping.MappingResults;
 import software.coley.recaf.services.window.WindowFactory;
 import software.coley.recaf.services.workspace.WorkspaceManager;
+import software.coley.recaf.ui.config.KeybindingConfig;
 import software.coley.recaf.ui.control.FontIconView;
 import software.coley.recaf.ui.control.graph.MethodCallGraphsPane;
 import software.coley.recaf.ui.control.popup.AddMemberPopup;
@@ -69,6 +71,8 @@ import software.coley.recaf.ui.docking.DockingRegion;
 import software.coley.recaf.ui.docking.DockingTab;
 import software.coley.recaf.ui.pane.CommentEditPane;
 import software.coley.recaf.ui.pane.DocumentationPane;
+import software.coley.recaf.ui.pane.editing.AbstractContentPane;
+import software.coley.recaf.ui.pane.editing.android.AndroidClassEditorType;
 import software.coley.recaf.ui.pane.editing.android.AndroidClassPane;
 import software.coley.recaf.ui.pane.editing.assembler.AssemblerPane;
 import software.coley.recaf.ui.pane.editing.binary.BinaryXmlFilePane;
@@ -164,10 +168,12 @@ public class Actions implements Service {
 	private final Instance<ClassReferenceSearchPane> classReferenceSearchPaneProvider;
 	private final Instance<MemberReferenceSearchPane> memberReferenceSearchPaneProvider;
 	private final Instance<MemberDeclarationSearchPane> memberDeclarationSearchPaneProvider;
+	private final KeybindingConfig keybindingConfig;
 	private final ActionsConfig config;
 
 	@Inject
 	public Actions(@Nonnull ActionsConfig config,
+	               @Nonnull KeybindingConfig keybindingConfig,
 	               @Nonnull WorkspaceManager workspaceManager,
 	               @Nonnull NavigationManager navigationManager,
 	               @Nonnull DockingManager dockingManager,
@@ -196,6 +202,7 @@ public class Actions implements Service {
 	               @Nonnull Instance<MemberReferenceSearchPane> memberReferenceSearchPaneProvider,
 	               @Nonnull Instance<MemberDeclarationSearchPane> memberDeclarationSearchPaneProvider) {
 		this.config = config;
+		this.keybindingConfig = keybindingConfig;
 		this.workspaceManager = workspaceManager;
 		this.navigationManager = navigationManager;
 		this.dockingManager = dockingManager;
@@ -344,19 +351,7 @@ public class Actions implements Service {
 					tab.setGraphic(updatedGraphic);
 				});
 			});
-			ContextMenu menu = new ContextMenu();
-			ObservableList<MenuItem> items = menu.getItems();
-			Menu mode = menu("menu.mode", CarbonIcons.VIEW);
-			mode.getItems().addAll(
-					action("menu.mode.class.decompile", CarbonIcons.CODE,
-							() -> content.setEditorType(JvmClassEditorType.DECOMPILE)),
-					action("menu.mode.file.hex", CarbonIcons.NUMBER_0,
-							() -> content.setEditorType(JvmClassEditorType.HEX))
-			);
-			items.add(mode);
-			addCopyPathAction(menu, info);
-			addCloseActions(menu, tab);
-			tab.setContextMenu(menu);
+			setupInfoTabContextMenu(info, content, tab);
 			return tab;
 		});
 	}
@@ -405,7 +400,7 @@ public class Actions implements Service {
 					tab.setGraphic(updatedGraphic);
 				});
 			});
-			setupInfoTabContextMenu(info, tab);
+			setupInfoTabContextMenu(info, content, tab);
 			return tab;
 		});
 	}
@@ -492,7 +487,7 @@ public class Actions implements Service {
 
 			// Build the tab.
 			DockingTab tab = createTab(dockingManager.getPrimaryRegion(), title, graphic, content);
-			setupInfoTabContextMenu(info, tab);
+			setupInfoTabContextMenu(info, content, tab);
 			return tab;
 		});
 	}
@@ -583,7 +578,7 @@ public class Actions implements Service {
 
 			// Build the tab.
 			DockingTab tab = createTab(dockingManager.getPrimaryRegion(), title, graphic, content);
-			setupInfoTabContextMenu(info, tab);
+			setupInfoTabContextMenu(info, content, tab);
 			return tab;
 		});
 	}
@@ -622,7 +617,7 @@ public class Actions implements Service {
 
 			// Build the tab.
 			DockingTab tab = createTab(dockingManager.getPrimaryRegion(), title, graphic, content);
-			setupInfoTabContextMenu(info, tab);
+			setupInfoTabContextMenu(info, content, tab);
 			return tab;
 		});
 	}
@@ -661,7 +656,7 @@ public class Actions implements Service {
 
 			// Build the tab.
 			DockingTab tab = createTab(dockingManager.getPrimaryRegion(), title, graphic, content);
-			setupInfoTabContextMenu(info, tab);
+			setupInfoTabContextMenu(info, content, tab);
 			return tab;
 		});
 	}
@@ -700,7 +695,7 @@ public class Actions implements Service {
 
 			// Build the tab.
 			DockingTab tab = createTab(dockingManager.getPrimaryRegion(), title, graphic, content);
-			setupInfoTabContextMenu(info, tab);
+			setupInfoTabContextMenu(info, content, tab);
 			return tab;
 		});
 	}
@@ -778,7 +773,10 @@ public class Actions implements Service {
 
 		// Build the tab.
 		DockingTab tab = createTab(targetRegion, title, graphic, content);
-		setupInfoTabContextMenu(classInfo, tab);
+		ContextMenu menu = new ContextMenu();
+		ObservableList<MenuItem> items = menu.getItems();
+		addCloseActions(menu, tab);
+		tab.setContextMenu(menu);
 		return tab;
 	}
 
@@ -2325,14 +2323,12 @@ public class Actions implements Service {
 				.findFirst().orElse(null);
 		T content = paneProvider.get();
 		if (region != null) {
-			DockingTab tab = region.createTab(getBinding(titleId), content);
-			tab.setGraphic(new FontIconView(icon));
+			DockingTab tab = createTab(region, getBinding(titleId), new FontIconView(icon), content);
 			tab.select();
 			FxThreadUtil.run(() -> SceneUtils.focus(content));
 		} else {
 			region = dockingManager.newRegion();
-			DockingTab tab = region.createTab(getBinding(titleId), content);
-			tab.setGraphic(new FontIconView(icon));
+			DockingTab tab = createTab(region, getBinding(titleId), new FontIconView(icon), content);
 			RecafScene scene = new RecafScene(region);
 			Stage window = windowFactory.createAnonymousStage(scene, getBinding("menu.search"), 800, 400);
 			window.show();
@@ -2381,9 +2377,56 @@ public class Actions implements Service {
 		return (Navigable) tab.getContent();
 	}
 
-	private static void setupInfoTabContextMenu(@Nonnull Info info, @Nonnull DockingTab tab) {
+	private void setupInfoTabContextMenu(@Nonnull Info info, @Nonnull AbstractContentPane<?> contentPane, @Nonnull DockingTab tab) {
 		ContextMenu menu = new ContextMenu();
 		ObservableList<MenuItem> items = menu.getItems();
+
+		if (info instanceof JvmClassInfo classInfo && contentPane instanceof JvmClassPane content) {
+			Menu mode = menu("menu.mode", CarbonIcons.VIEW);
+			mode.getItems().addAll(
+					action("menu.mode.class.decompile", CarbonIcons.CODE,
+							() -> content.setEditorType(JvmClassEditorType.DECOMPILE)),
+					action("menu.mode.file.hex", CarbonIcons.NUMBER_0,
+							() -> content.setEditorType(JvmClassEditorType.HEX))
+			);
+			items.add(mode);
+		} else if (info instanceof AndroidClassInfo classInfo && contentPane instanceof AndroidClassPane content) {
+			Menu mode = menu("menu.mode", CarbonIcons.VIEW);
+			mode.getItems().addAll(
+					action("menu.mode.class.decompile", CarbonIcons.CODE,
+							() -> content.setEditorType(AndroidClassEditorType.DECOMPILE)),
+					action("menu.mode.file.smali", CarbonIcons.NUMBER_0,
+							() -> content.setEditorType(AndroidClassEditorType.SMALI))
+			);
+			items.add(mode);
+		} else if (info instanceof ImageFileInfo fileInfo) {
+			// TODO: We need to copy-paste this a number of times for all the different file info types
+			//  and let each toggle between "automatic" (native editor) and hex. The way that it is done
+			//  here works but isn't exactly pretty and lets users replace the current pane they have open
+			//  with the same kind of pane. Having some abstraction model to alleviate the copy-paste and this
+			//  replacement-of-self problem would be nice.
+			Menu mode = menu("menu.mode", CarbonIcons.VIEW);
+			mode.getItems().addAll(
+					action("menu.mode.file.auto", CarbonIcons.IMAGE, () -> {
+						ImageFilePane content = imagePaneProvider.get();
+						if (tab.getContent() instanceof AbstractContentPane<?> existing && existing.getPath() != null) {
+							content.onUpdatePath(existing.getPath());
+							existing.disable();
+						}
+						tab.setContent(content);
+					}),
+					action("menu.mode.file.hex", CarbonIcons.CODE, () -> {
+						HexFilePane content = hexPaneProvider.get();
+						if (tab.getContent() instanceof AbstractContentPane<?> existing && existing.getPath() != null) {
+							content.onUpdatePath(existing.getPath());
+							existing.disable();
+						}
+						tab.setContent(content);
+					})
+			);
+			items.add(mode);
+		}
+
 		addCopyPathAction(menu, info);
 		addCloseActions(menu, tab);
 		tab.setContextMenu(menu);
@@ -2416,12 +2459,16 @@ public class Actions implements Service {
 	 * @return Created tab.
 	 */
 	@Nonnull
-	private static DockingTab createTab(@Nonnull DockingRegion region,
-	                                    @Nonnull String title,
-	                                    @Nonnull Node graphic,
-	                                    @Nonnull Node content) {
+	private DockingTab createTab(@Nonnull DockingRegion region,
+	                             @Nonnull String title,
+	                             @Nonnull Node graphic,
+	                             @Nonnull Node content) {
 		DockingTab tab = region.createTab(title, content);
 		tab.setGraphic(graphic);
+		content.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+			if (tab.isClosable() && keybindingConfig.getCloseTab().match(e))
+				tab.close();
+		});
 		return tab;
 	}
 
@@ -2440,12 +2487,16 @@ public class Actions implements Service {
 	 * @return Created tab.
 	 */
 	@Nonnull
-	private static DockingTab createTab(@Nonnull DockingRegion region,
-	                                    @Nonnull ObservableValue<String> title,
-	                                    @Nonnull Node graphic,
-	                                    @Nonnull Node content) {
+	private DockingTab createTab(@Nonnull DockingRegion region,
+	                             @Nonnull ObservableValue<String> title,
+	                             @Nonnull Node graphic,
+	                             @Nonnull Node content) {
 		DockingTab tab = region.createTab(title, content);
 		tab.setGraphic(graphic);
+		content.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+			if (tab.isClosable() && keybindingConfig.getCloseTab().match(e))
+				tab.close();
+		});
 		return tab;
 	}
 

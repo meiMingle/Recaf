@@ -27,12 +27,16 @@ import software.coley.recaf.ui.control.BoundMultiToggleIcon;
 import software.coley.recaf.ui.control.FontIconView;
 import software.coley.recaf.ui.control.tree.WorkspaceTreeCell;
 import software.coley.recaf.ui.control.tree.WorkspaceTreeNode;
+import software.coley.recaf.util.FxThreadUtil;
 import software.coley.recaf.util.Lang;
+import software.coley.recaf.util.threading.ThreadPoolFactory;
 import software.coley.recaf.workspace.model.Workspace;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.function.Supplier;
 
 /**
  * Displays parents and children of a {@link ClassInfo}.
@@ -43,15 +47,16 @@ import java.util.Objects;
 public class InheritancePane extends StackPane implements UpdatableNavigable {
 	private final SimpleObjectProperty<TreeContent> contentType = new SimpleObjectProperty<>(TreeContent.CHILDREN);
 	private final TreeView<PathNode<?>> tree = new TreeView<>();
-	private final InheritanceGraph inheritanceGraph;
+	private final Supplier<InheritanceGraph> inheritanceGraphLookup;
+	private final ExecutorService service = ThreadPoolFactory.newSingleThreadExecutor("inherit-pane");
 	private Workspace workspace;
 	private ClassPathNode path;
 
 	@Inject
 	public InheritancePane(@Nonnull InheritanceGraphService graphService,
-						   @Nonnull CellConfigurationService configurationService) {
-		this.inheritanceGraph = Objects.requireNonNull(graphService.getCurrentWorkspaceInheritanceGraph(), "Graph not created");
-		contentType.addListener((ob, old, cur) -> regenerateTree());
+	                       @Nonnull CellConfigurationService configurationService) {
+		this.inheritanceGraphLookup = () -> Objects.requireNonNull(graphService.getCurrentWorkspaceInheritanceGraph(), "Graph not created");
+		contentType.addListener((ob, old, cur) -> scheduleRegenerateTree());
 
 		// Configure tree.
 		tree.setShowRoot(true);
@@ -75,19 +80,32 @@ public class InheritancePane extends StackPane implements UpdatableNavigable {
 	}
 
 	/**
+	 * Schedule tree regeneration.
+	 */
+	private void scheduleRegenerateTree() {
+		if (!service.isShutdown())
+			service.submit(this::regenerateTree);
+	}
+
+	/**
 	 * Recreate tree contents based on whether we want to show child types, or parent types.
 	 */
 	private void regenerateTree() {
 		// Skip if path not set.
 		if (path == null) {
-			tree.setRoot(null);
+			FxThreadUtil.run(() -> tree.setRoot(null));
 			return;
 		}
 
 		// Skip if root not found in the graph.
-		InheritanceVertex vertex = inheritanceGraph.getVertex(path.getValue().getName());
+		InheritanceGraph graph = inheritanceGraphLookup.get();
+		if (graph == null) {
+			FxThreadUtil.run(() -> tree.setRoot(null));
+			return;
+		}
+		InheritanceVertex vertex = graph.getVertex(path.getValue().getName());
 		if (vertex == null) {
-			tree.setRoot(null);
+			FxThreadUtil.run(() -> tree.setRoot(null));
 			return;
 		}
 
@@ -97,7 +115,7 @@ public class InheritancePane extends StackPane implements UpdatableNavigable {
 			createChildren(root, vertex);
 		else
 			createParents(root, vertex);
-		tree.setRoot(root);
+		FxThreadUtil.run(() -> tree.setRoot(root));
 	}
 
 	/**
@@ -173,7 +191,7 @@ public class InheritancePane extends StackPane implements UpdatableNavigable {
 		if (path instanceof ClassPathNode classPath) {
 			this.path = classPath;
 			workspace = path.getValueOfType(Workspace.class);
-			regenerateTree();
+			scheduleRegenerateTree();
 		}
 	}
 
@@ -185,6 +203,7 @@ public class InheritancePane extends StackPane implements UpdatableNavigable {
 
 	@Override
 	public void disable() {
+		service.shutdownNow();
 		setDisable(true);
 		tree.setRoot(null);
 	}

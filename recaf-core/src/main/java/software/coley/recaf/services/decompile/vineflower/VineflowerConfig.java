@@ -180,7 +180,7 @@ public class VineflowerConfig extends BaseDecompilerConfig {
         addValue(new BasicConfigValue<>("rename-members", boolean.class, renameMembers));
         addValue(new BasicConfigValue<>("thread-count", String.class, threadCount));
         addValue(new BasicConfigValue<>("user-renamer-class", String.class, userRenamerClass));
-        
+
         registerConfigValuesHashUpdates();
     }
 
@@ -201,8 +201,12 @@ public class VineflowerConfig extends BaseDecompilerConfig {
                 properties.put(key, integer.toString());
             }
         });
-        return properties;
-    }
+
+		// We NEVER want kotlin output. It will break our AST parser.
+		properties.put("kt-enable", "0");
+
+		return properties;
+	}
 
     /**
      * @return Level to use for {@link VineflowerLogger}.

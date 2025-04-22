@@ -3,7 +3,12 @@ package software.coley.recaf.services.deobfuscation;
 import org.junit.jupiter.api.Test;
 import software.coley.recaf.services.deobfuscation.transform.generic.DeadCodeRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.GotoInliningTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.LinearOpaqueConstantFoldingTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.OpaquePredicateFoldingTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.VariableFoldingTransformer;
 import software.coley.recaf.util.StringUtil;
+import software.coley.recaf.util.analysis.ReInterpreter;
+import software.coley.recaf.util.analysis.value.ReValue;
 
 import java.util.List;
 
@@ -270,5 +275,215 @@ public class RegressionDeobfuscationTest extends BaseDeobfuscationTest {
 			// Just needs to pass, dead-code remover's analysis process
 			// failing would indicate this has failed with an exception
 		});
+	}
+
+	/**
+	 * Bug from improper label visitation tracking in {@link GotoInliningTransformer} due to improper catch block
+	 * tracking.
+	 */
+	@Test
+	void gotoInlining3() {
+		String asm = """
+				.method public execute (Lorg/apache/http/HttpHost;Lorg/apache/http/HttpRequest;Lorg/apache/http/client/ResponseHandler;Lorg/apache/http/protocol/HttpContext;)Ljava/lang/Object; {
+				    parameters: { this, host, request, handler, context },
+				    exceptions: {
+				        { B, C, D, Lorg/apache/http/client/ClientProtocolException; },
+				        { E, F, G, Ljava/lang/Exception; },
+				        { B, C, I, * },
+				        { D, J, I, * }
+				     },
+				    code: {
+				    A:
+				        aload this
+				        aload host
+				        aload request
+				        aload context
+				        invokevirtual org/apache/http/impl/client/CloseableHttpClient.execute (Lorg/apache/http/HttpHost;Lorg/apache/http/HttpRequest;Lorg/apache/http/protocol/HttpContext;)Lorg/apache/http/client/methods/CloseableHttpResponse;
+				        astore response
+				    B:
+				        // try-start:   range=[B-C] handler=D:org/apache/http/client/ClientProtocolException
+				        // try-start:   range=[B-C] handler=I:*
+				        aload handler
+				        aload response
+				        invokeinterface org/apache/http/client/ResponseHandler.handleResponse (Lorg/apache/http/HttpResponse;)Ljava/lang/Object;
+				        astore protoError
+				        aload response
+				        invokeinterface org/apache/http/client/methods/CloseableHttpResponse.getEntity ()Lorg/apache/http/HttpEntity;
+				        astore entity
+				        aload entity
+				        invokestatic org/apache/http/util/EntityUtils.consume (Lorg/apache/http/HttpEntity;)V
+				        aload protoError
+				        astore ex
+				    C:
+				        // try-end:     range=[B-C] handler=D:org/apache/http/client/ClientProtocolException
+				        // try-end:     range=[B-C] handler=I:*
+				        aload response
+				        invokeinterface org/apache/http/client/methods/CloseableHttpResponse.close ()V
+				        aload ex
+				        areturn
+				    D:
+				        // try-handler: range=[B-C] handler=D:org/apache/http/client/ClientProtocolException
+				        // try-start:   range=[D-J] handler=I:*
+				        astore protoError
+				        aload response
+				        invokeinterface org/apache/http/client/methods/CloseableHttpResponse.getEntity ()Lorg/apache/http/HttpEntity;
+				        astore entity
+				    E:
+				        // try-start:   range=[E-F] handler=G:java/lang/Exception
+				        aload entity
+				        invokestatic org/apache/http/util/EntityUtils.consume (Lorg/apache/http/HttpEntity;)V
+				    F:
+				        // try-end:     range=[E-F] handler=G:java/lang/Exception
+				        goto H
+				    G:
+				        // try-handler: range=[E-F] handler=G:java/lang/Exception
+				        astore ex
+				    H:
+				        aload protoError
+				        athrow
+				    I:
+				        // try-handler: range=[B-C] handler=I:*
+				        // try-handler: range=[D-J] handler=I:*
+				        astore t
+				    J:
+				        // try-end:     range=[D-J] handler=I:*
+				        aload t
+				        athrow
+				    K:
+				    }
+				}
+				""";
+		validateNoTransformation(asm, List.of(GotoInliningTransformer.class));
+	}
+
+	/**
+	 * Bug from {@link VariableFoldingTransformer} where {@code IINC} on a variable initially assigned to {@code 0}
+	 * wouldn't properly change the tracked state of the variable at the given slot. It usually indicates something
+	 * like a for loop counter. We would want to change the state to "unknown" since a loop counter can have more than
+	 * a single value during its lifespan in the relevant bytecode ranges.
+	 * <br>
+	 * If we properly track {@code IINC} handling, this should see no transformations.
+	 */
+	@Test
+	void variableFoldingWithIinc() {
+		String asm = """
+				.method public equals (Ljava/lang/Object;)Z {
+				    parameters: { this, object },
+				    code: {
+				    A:
+				        aload object
+				        aload this
+				        if_acmpne D
+				    B:
+				        iconst_1
+				        ireturn
+				    D:
+				        aload object
+				        checkcast Example
+				        astore that
+				    E:
+				        aload this
+				        invokevirtual Example.size ()I
+				        istore size
+				    F:
+				        aload that
+				        invokevirtual Example.size ()I
+				        iload size
+				        if_icmpeq H
+				    G:
+				        iconst_0
+				        ireturn
+				    H:
+				        iconst_0
+				        istore i
+				    I:
+				        iload i
+				        iload size
+				        if_icmpge M
+				    J:
+				        aload this
+				        getfield Example.array [I
+				        aload this
+				        getfield Example.start I
+				        iload i
+				        iadd
+				        iaload
+				        aload that
+				        getfield Example.array [I
+				        aload that
+				        getfield Example.start I
+				        iload i
+				        iadd
+				        iaload
+				        if_icmpeq L
+				    K:
+				        iconst_0
+				        ireturn
+				    L:
+				        iinc i 1
+				        goto I
+				    M:
+				        iconst_1
+				        ireturn
+				    N:
+				    }
+				}
+				""";
+		validateNoTransformation(asm, List.of(VariableFoldingTransformer.class));
+	}
+
+	/**
+	 * If {@link ReInterpreter#merge(ReValue, ReValue)} is implemented incorrectly, some transformers relying on
+	 * frame analysis with {@link ReValue} contents may incorrectly assume they should make optimizations.
+	 * <p>
+	 * This example shows an if-else control flow based on some value stored in a local variable. That switch key
+	 * is unknown at the start, so any branch taken can modify the local variable state. This means we should
+	 * end up at the if-else control flow with an unknown value <i>(Or at the very least, not a single known value)</i>.
+	 * Because of this, no specific path in this if-else should be optimized away.
+	 * <p>
+	 * If we see any transforms take place here, something is broken.
+	 */
+	@Test
+	void frameMergeIncorrectlyLeadsToImproperOptimization() {
+		String asm = """
+				.method public static example ()V {
+				    code: {
+				    A:
+				        getstatic Example.key I
+				        lookupswitch {
+						    1: B,
+						    2: C,
+						    3: D,
+						    default: E
+						}
+				    B:
+				        iconst_0
+				        istore foo
+				        goto F
+				    C:
+				        iconst_1
+				        istore foo
+				        goto F
+				    D:
+				        iconst_2
+				        istore foo
+				        goto F
+				    E:
+				        iconst_3
+				        istore foo
+				        goto F
+				    F:
+				        iload foo
+				        ifeq G
+				        invokestatic Example.nonzero ()V
+				        return
+				    G:
+				        invokestatic Example.zero ()V
+				        return
+				    Z:
+				    }
+				}
+				""";
+		validateNoTransformation(asm, List.of(VariableFoldingTransformer.class, LinearOpaqueConstantFoldingTransformer.class, OpaquePredicateFoldingTransformer.class));
 	}
 }

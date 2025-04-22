@@ -7,11 +7,13 @@ import software.coley.recaf.info.annotation.AnnotationElement;
 import software.coley.recaf.info.annotation.AnnotationEnumReference;
 import software.coley.recaf.info.annotation.AnnotationInfo;
 import software.coley.recaf.services.text.TextFormatConfig;
+import software.coley.recaf.util.EscapeUtil;
 import software.coley.recaf.util.StringUtil;
 import software.coley.recaf.util.Types;
 
 import java.util.List;
 import java.util.Map;
+import java.util.StringJoiner;
 import java.util.stream.Collectors;
 
 /**
@@ -105,7 +107,7 @@ public class PrintUtils {
 		switch (value) {
 			case String str -> {
 				// String value
-				return '"' + str + '"';
+				return '"' + EscapeUtil.escapeStandardAndUnicodeWhitespace(str) + '"';
 			}
 			case Type type -> {
 				// Class value
@@ -126,6 +128,54 @@ public class PrintUtils {
 						.map(e -> elementValueToString(format, e))
 						.collect(Collectors.joining(", "));
 				return "{ " + elements + " }";
+			}
+			case boolean[] array -> {
+				StringJoiner str = new StringJoiner(", ");
+				for (boolean b : array)
+					str.add(Boolean.toString(b));
+				return "{ " + str + " }";
+			}
+			case byte[] array -> {
+				StringJoiner str = new StringJoiner(", ");
+				for (byte b : array)
+					str.add(Byte.toString(b));
+				return "{ " + str + " }";
+			}
+			case char[] array -> {
+				StringJoiner str = new StringJoiner(", ");
+				for (char c : array)
+					str.add(Character.toString(c));
+				return "{ " + str + " }";
+			}
+			case short[] array -> {
+				StringJoiner str = new StringJoiner(", ");
+				for (short s : array)
+					str.add(Short.toString(s));
+				return "{ " + str + " }";
+			}
+			case int[] array -> {
+				StringJoiner str = new StringJoiner(", ");
+				for (int i : array)
+					str.add(Integer.toString(i));
+				return "{ " + str + " }";
+			}
+			case float[] array -> {
+				StringJoiner str = new StringJoiner(", ");
+				for (float f : array)
+					str.add(Float.toString(f));
+				return "{ " + str + " }";
+			}
+			case double[] array -> {
+				StringJoiner str = new StringJoiner(", ");
+				for (double d : array)
+					str.add(Double.toString(d));
+				return "{ " + str + " }";
+			}
+			case long[] array -> {
+				StringJoiner str = new StringJoiner(", ");
+				for (long l : array)
+					str.add(Long.toString(l));
+				return "{ " + str + " }";
 			}
 			default -> {
 				// Primitive

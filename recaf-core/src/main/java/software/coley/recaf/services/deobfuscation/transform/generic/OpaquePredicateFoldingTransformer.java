@@ -119,7 +119,7 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 
 					// Skip if stack top is not known.
 					ReValue stackTop = frame.getStack(frame.getStackSize() - 1);
-					if (!stackTop.hasKnownValue())
+					if (!stackTop.hasKnownValue() && !(stackTop instanceof ObjectValue ov && ov.isNull()))
 						continue;
 
 					// Get instruction of the top stack's contributing instruction.
@@ -140,7 +140,7 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 								case IFEQ ->
 										replaceIntValue(instructions, prevInstruction, stackTop, jin, v -> v.isEqualTo(0));
 								case IFNE ->
-										replaceIntValue(instructions, prevInstruction, stackTop, jin, v -> !v.isEqualTo(0));
+										replaceIntValue(instructions, prevInstruction, stackTop, jin, v -> v.isNotEqualTo(0));
 								case IFLT ->
 										replaceIntValue(instructions, prevInstruction, stackTop, jin, v -> v.isLessThan(0));
 								case IFGE ->
@@ -160,7 +160,7 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 							if (frame.getStackSize() < 2)
 								continue;
 							ReValue stack2ndTop = frame.getStack(frame.getStackSize() - 2);
-							if (!stack2ndTop.hasKnownValue())
+							if (!stack2ndTop.hasKnownValue()&& !(stack2ndTop instanceof ObjectValue ov && ov.isNull()))
 								continue;
 
 							// Skip if the other argument to compare with is not immediately backed by
@@ -174,7 +174,7 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 								case IF_ICMPEQ ->
 										replaceIntIntValue(instructions, prevPrevInstruction, prevInstruction, stack2ndTop, stackTop, jin, IntValue::isEqualTo);
 								case IF_ICMPNE ->
-										replaceIntIntValue(instructions, prevPrevInstruction, prevInstruction, stack2ndTop, stackTop, jin, (a, b) -> !a.isEqualTo(b));
+										replaceIntIntValue(instructions, prevPrevInstruction, prevInstruction, stack2ndTop, stackTop, jin, IntValue::isNotEqualTo);
 								case IF_ICMPLT ->
 										replaceIntIntValue(instructions, prevPrevInstruction, prevInstruction, stack2ndTop, stackTop, jin, IntValue::isLessThan);
 								case IF_ICMPGE ->

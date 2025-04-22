@@ -71,7 +71,8 @@ public abstract class BaseDeobfuscationTest extends TestBase {
 		// Transforming should not actually result in any changes
 		JvmTransformResult result = assertDoesNotThrow(() -> transformationApplier.transformJvm(transformers));
 		assertTrue(result.getTransformerFailures().isEmpty(), "There were transformation failures");
-		assertEquals(0, result.getTransformerFailures().size(), "There were unexpected transformations applied");
+		assertTrue(result.getTransformedClasses().isEmpty(), "There were unexpected transformations applied");
+		assertTrue(result.getModifiedClassesPerTransformer().isEmpty(), "There were unexpected transformations applied");
 	}
 
 	protected void validateBeforeAfterDecompile(@Nonnull String assembly, @Nonnull List<Class<? extends JvmClassTransformer>> transformers,
@@ -129,6 +130,14 @@ public abstract class BaseDeobfuscationTest extends TestBase {
 			JvmTransformResult result = assertDoesNotThrow(() -> transformationApplier.transformJvm(transformers));
 
 			// No transform step should fail.
+			result.getTransformerFailures().forEach((path, failureMap) -> {
+				System.err.println(path.getValue().getName());
+				failureMap.forEach((transformer, error) -> {
+					System.err.println(transformer.getSimpleName());
+					error.printStackTrace(System.err);
+					System.err.println();
+				});
+			});
 			assertTrue(result.getTransformerFailures().isEmpty(), "There were transformation failures");
 
 			// Prepare for next transform step.
@@ -138,7 +147,7 @@ public abstract class BaseDeobfuscationTest extends TestBase {
 			passes++;
 		}
 		assertTrue(passes > 0, "There were no transformations");
-		if (PRINT_BEFORE_AFTER) System.out.println("========= AFTER ========\n" + assembly);
+		if (PRINT_BEFORE_AFTER) System.out.println("========= AFTER x" + passes + " PASSES ========\n" + assembly);
 		assertionChecker.accept(assembly);
 	}
 
