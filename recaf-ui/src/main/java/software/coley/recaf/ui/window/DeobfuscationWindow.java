@@ -44,9 +44,11 @@ import software.coley.recaf.services.deobfuscation.transform.generic.GotoInlinin
 import software.coley.recaf.services.deobfuscation.transform.generic.IllegalAnnotationRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.IllegalSignatureRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.IllegalVarargsRemovingTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.KotlinNameRestorationTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.LinearOpaqueConstantFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.OpaquePredicateFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.RedundantTryCatchRemovingTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.SourceNameRestorationTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.StackOperationFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.StaticValueInliningTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.VariableFoldingTransformer;
@@ -139,7 +141,9 @@ public class DeobfuscationWindow extends RecafStage {
 			));
 			TreeItem<Selection> restoration = new TreeItem<>(new Selection.Category("deobf.tree.generic.restoration", CarbonIcons.AI_RESULTS));
 			restoration.getChildren().addAll(of(
-					EnumNameRestorationTransformer.class
+					EnumNameRestorationTransformer.class,
+					KotlinNameRestorationTransformer.class,
+					SourceNameRestorationTransformer.class
 			));
 			generic.getChildren().addAll(
 					anti,
@@ -346,7 +350,7 @@ public class DeobfuscationWindow extends RecafStage {
 					working.set(true);
 					JvmTransformResult result = applier.transformJvm(list);
 					result.apply();
-					hide();
+					FxThreadUtil.run(this::hide);
 				} catch (TransformationException e) {
 					// TODO: A tooltip or something showing would also be nice to have here since this is in a separate
 					//  window which could mean the user cannot see the logging pane output.
