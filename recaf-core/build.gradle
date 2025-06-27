@@ -73,6 +73,9 @@ sourceSets {
         }
     }
 }
+jar{
+    duplicatesStrategy  DuplicatesStrategy.EXCLUDE
+}
 
 private boolean isBuildConfigUpToDate() {
     File buildConfigPath = project.file(gversion.srcDir +
