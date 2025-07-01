@@ -19,6 +19,7 @@ import software.coley.bentofx.layout.container.DockContainerBranch;
 import software.coley.bentofx.layout.container.DockContainerLeaf;
 import software.coley.bentofx.layout.container.DockContainerRootBranch;
 import software.coley.recaf.analytics.logging.Logging;
+import software.coley.recaf.services.info.summary.ResourceSummaryServiceConfig;
 import software.coley.recaf.services.navigation.NavigationManager;
 import software.coley.recaf.services.workspace.WorkspaceCloseListener;
 import software.coley.recaf.services.workspace.WorkspaceManager;
@@ -50,7 +51,9 @@ public class DockingLayoutManager {
 	private static final Logger logger = Logging.get(DockingLayoutManager.class);
 
 	/** Size in px for {@link #newBottomContainer()} */
-	private static final int BOTTOM_SIZE = 100;
+	private static final double BOTTOM_SIZE = 100;
+	/** Size in px for the {@link WorkspaceExplorerPane} in {@link #newWorkspaceContainer()} */
+	private static final double TOP_WORKSPACE_EXPLORER_SIZE = 0.25;
 	/** Split layout holding {@link #ID_CONTAINER_ROOT_TOP} and {@link #ID_CONTAINER_ROOT_BOTTOM} */
 	public static final String ID_CONTAINER_ROOT_SPLIT = "layout-root-split";
 	/** Top half of the main UI at initial layout. */
@@ -68,19 +71,22 @@ public class DockingLayoutManager {
 	private final Instance<WorkspaceInformationPane> workspaceInfoProvider;
 	private final Instance<WorkspaceExplorerPane> workspaceExplorerProvider;
 	private final DockContainerRootBranch root;
+	private final ResourceSummaryServiceConfig resourceSummaryConfig;
 
 	@Inject
 	public DockingLayoutManager(@Nonnull DockingManager dockingManager,
-	                            @Nonnull WorkspaceManager workspaceManager,
-	                            @Nonnull Instance<LoggingPane> loggingPaneProvider,
-	                            @Nonnull Instance<WelcomePane> welcomePaneProvider,
-	                            @Nonnull Instance<WorkspaceInformationPane> workspaceInfoProvider,
-	                            @Nonnull Instance<WorkspaceExplorerPane> workspaceExplorerProvider) {
+								@Nonnull WorkspaceManager workspaceManager,
+								@Nonnull Instance<LoggingPane> loggingPaneProvider,
+								@Nonnull Instance<WelcomePane> welcomePaneProvider,
+								@Nonnull Instance<WorkspaceInformationPane> workspaceInfoProvider,
+								@Nonnull Instance<WorkspaceExplorerPane> workspaceExplorerProvider,
+								@Nonnull ResourceSummaryServiceConfig resourceSummaryConfig) {
 		this.dockingManager = dockingManager;
 		this.loggingPaneProvider = loggingPaneProvider;
 		this.welcomePaneProvider = welcomePaneProvider;
 		this.workspaceInfoProvider = workspaceInfoProvider;
 		this.workspaceExplorerProvider = workspaceExplorerProvider;
+		this.resourceSummaryConfig = resourceSummaryConfig;
 
 		// Register listener
 		ListenerHost host = new ListenerHost();
@@ -134,14 +140,18 @@ public class DockingLayoutManager {
 		DockContainerLeaf primary = dockingManager.getBento().dockBuilding().leaf(ID_CONTAINER_WORKSPACE_PRIMARY);
 		primary.setPruneWhenEmpty(false);
 		primary.setMenuFactory(this::buildMenu);
-		primary.addDockables(
-				dockingManager.newTranslatableDockable("workspace.info", CarbonIcons.INFORMATION, workspaceInfoProvider.get())
-		);
+
+		// If user don't want to see the summary, just skip
+		if (resourceSummaryConfig.getSummarizeOnOpen().getValue()) {
+			primary.addDockables(
+					dockingManager.newTranslatableDockable("workspace.info", CarbonIcons.INFORMATION, workspaceInfoProvider.get())
+			);
+		}
 
 		// Combining the two into a branch
 		DockContainerBranch branch = dockingManager.getBento().dockBuilding().branch(ID_CONTAINER_ROOT_TOP);
 		branch.addContainers(explorer, primary);
-		branch.setContainerSizePx(explorer, 200);
+		branch.setContainerSizePercent(explorer, TOP_WORKSPACE_EXPLORER_SIZE);
 
 		// We don't prune when empty because it breaks the 'replace top' container logic we have when
 		// new workspaces get opened or existing ones get closed. As long as the top exists we can always

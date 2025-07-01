@@ -1,14 +1,21 @@
 package software.coley.recaf.ui.pane.editing.assembler;
 
 import atlantafx.base.controls.Spacer;
+import it.unimi.dsi.fastutil.ints.Int2ObjectArrayMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import jakarta.annotation.Nonnull;
 import jakarta.enterprise.context.Dependent;
 import jakarta.inject.Inject;
 import javafx.animation.Interpolator;
 import javafx.animation.Transition;
-import javafx.scene.canvas.Canvas;
-import javafx.scene.canvas.GraphicsContext;
-import javafx.scene.effect.*;
+import javafx.scene.Node;
+import javafx.scene.effect.Blend;
+import javafx.scene.effect.BlendMode;
+import javafx.scene.effect.Bloom;
+import javafx.scene.effect.ColorAdjust;
+import javafx.scene.effect.Effect;
+import javafx.scene.effect.Glow;
+import javafx.scene.image.WritableImage;
 import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
 import javafx.util.Duration;
@@ -23,8 +30,14 @@ import me.darknet.assembler.ast.specific.ASTMethod;
 import me.darknet.assembler.util.Location;
 import org.reactfx.Change;
 import org.slf4j.Logger;
+import software.coley.bentofx.control.canvas.PixelCanvas;
+import software.coley.bentofx.control.canvas.PixelPainter;
+import software.coley.bentofx.control.canvas.PixelPainterIntArgb;
+import software.coley.collections.Unchecked;
 import software.coley.collections.box.Box;
 import software.coley.collections.box.IntBox;
+import software.coley.observables.AbstractObservable;
+import software.coley.observables.ChangeListener;
 import software.coley.observables.ObservableBoolean;
 import software.coley.observables.ObservableObject;
 import software.coley.recaf.analytics.logging.Logging;
@@ -32,9 +45,19 @@ import software.coley.recaf.ui.control.richtext.Editor;
 import software.coley.recaf.ui.control.richtext.linegraphics.AbstractLineGraphicFactory;
 import software.coley.recaf.ui.control.richtext.linegraphics.AbstractTextBoundLineGraphicFactory;
 import software.coley.recaf.ui.control.richtext.linegraphics.LineContainer;
+import software.coley.recaf.util.Colors;
+import software.coley.recaf.util.DesktopUtil;
 import software.coley.recaf.util.FxThreadUtil;
+import software.coley.recaf.util.NumberUtil;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -54,34 +77,49 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 	private final ObservableBoolean drawLines = new ObservableBoolean(false);
 	private final ControlFlowLineFactory arrowFactory = new ControlFlowLineFactory();
 	private final ControlFlowLinesConfig config;
+	private final ListenerHost redrawListener = new ListenerHost();
 	private List<LabelData> model = Collections.emptyList();
-
 
 	@Inject
 	public ControlFlowLines(@Nonnull ControlFlowLinesConfig config) {
 		this.config = config;
-
-		Runnable redraw = () -> {if (editor != null) editor.redrawParagraphGraphics();};
-		drawLines.addChangeListener((ob, old, cur) -> redraw.run());
-		currentInstructionSelection.addChangeListener((ob, old, cur) -> redraw.run());
-		config.getConnectionMode().addChangeListener((ob, old, cur) -> redraw.run());
-		config.getRenderMode().addChangeListener((ob, old, cur) -> redraw.run());
 	}
 
 	@Override
+	@SuppressWarnings("unchecked")
 	public void install(@Nonnull Editor editor) {
 		super.install(editor);
 
 		editor.getRootLineGraphicFactory().addLineGraphicFactory(arrowFactory);
 		editor.getCaretPosEventStream().addObserver(onCaretMove);
+
+		drawLines.addChangeListener(redrawListener);
+		currentInstructionSelection.addChangeListener(redrawListener);
+		config.getConnectionMode().addChangeListener(redrawListener);
+		config.getRenderMode().addChangeListener(redrawListener);
 	}
 
 	@Override
+	@SuppressWarnings("unchecked")
 	public void uninstall(@Nonnull Editor editor) {
 		super.uninstall(editor);
 
+		arrowFactory.cleanup();
 		editor.getRootLineGraphicFactory().removeLineGraphicFactory(arrowFactory);
 		editor.getCaretPosEventStream().removeObserver(onCaretMove);
+
+		drawLines.removeChangeListener(redrawListener);
+		currentInstructionSelection.removeChangeListener(redrawListener);
+		config.getConnectionMode().removeChangeListener(redrawListener);
+		config.getRenderMode().removeChangeListener(redrawListener);
+	}
+
+	@Override
+	public void disable() {
+		super.disable();
+
+		if (editor != null)
+			uninstall(editor);
 	}
 
 	@Override
@@ -278,20 +316,22 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 	 * Highlighter which shows read and write access of a {@link LabelData}.
 	 */
 	private class ControlFlowLineFactory extends AbstractTextBoundLineGraphicFactory {
-		private static final int MASK_NORTH = 0;
-		private static final int MASK_SOUTH = 1;
-		private static final int MASK_EAST = 2;
+		private static final int MASK_NORTH = 1;
+		private static final int MASK_SOUTH = 2;
+		private static final int MASK_EAST = 4;
+		private final ArrayList<ASTElement> switchDestinations = new ArrayList<>(64);
+		private final Int2ObjectMap<ImageRecycler> recyclers = new Int2ObjectArrayMap<>();
 		private final int[] offsets = new int[containerWidth];
 		private final long rainbowHueRotationDurationMillis = 3000;
+		private final PixelPainter<?> pixelPainter = new PixelPainterIntArgb();
 
 		private ControlFlowLineFactory() {
 			super(AbstractLineGraphicFactory.P_BRACKET_MATCH - 1);
 
 			// Populate offsets
 			int j = 0;
-			for (int i = 0; i < offsets.length; i++) {
+			for (int i = 0; i < offsets.length; i++)
 				offsets[i] = 1 + (i * 3);
-			}
 		}
 
 		@Override
@@ -311,35 +351,10 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 			List<LabelData> localModel = model;
 
 			double indent = editor.computeWhitespacePrefixWidth(paragraph) - 3 /* padding so lines aren't right up against text */;
-			double width = containerWidth + indent;
+			double width = containerWidth + Math.min(100, indent); // Limit dimensions of canvas
 			double height = containerHeight + 2;
-			Canvas canvas = new Canvas(width, height);
-			canvas.setManaged(false);
-			canvas.setMouseTransparent(true);
-			canvas.setTranslateY(-1);
 
-			// Setup canvas styling for the render mode.
-			var renderMode = config.getRenderMode().getValue();
-			Blend blend = new Blend(BlendMode.HARD_LIGHT);
-			Effect effect = switch (renderMode) {
-				case FLAT -> blend;
-				case RAINBOW_GLOWING, FLAT_GLOWING -> {
-					Bloom bloom = new Bloom(0.2);
-					Glow glow = new Glow(0.7);
-					bloom.setInput(blend);
-					glow.setInput(bloom);
-					yield glow;
-				}
-			};
-			canvas.setEffect(effect);
-			if (renderMode == ControlFlowLinesConfig.LineRenderMode.RAINBOW_GLOWING) {
-				setupRainbowAnimation(effect, canvas).play();
-			}
-
-			GraphicsContext gc = canvas.getGraphicsContext2D();
-			gc.setLineWidth(1);
-			container.getChildren().add(canvas);
-
+			PixelCanvas canvas = null;
 			for (LabelData labelData : localModel) {
 				// Skip if there are no references to the current label.
 				List<ASTElement> labelReferrers = labelData.usage().writers();
@@ -360,18 +375,48 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 						// The label data writers will be targeting the label identifier children in the AST
 						// so if we walk the switch instruction's children we can see if the current label data
 						// references one of those elements.
-						List<ASTElement> elements = new ArrayList<>();
+						ArrayList<ASTElement> destinations = switchDestinations;
+						destinations.clear();
 						value.walk(e -> {
-							elements.add(e);
+							destinations.add(e);
+							destinations.ensureCapacity(e.children().size() + 1);
 							return true;
 						});
-						if (labelData.usage().readersAndWriters().noneMatch(elements::contains))
+						if (labelData.usage().readersAndWriters().noneMatch(destinations::contains))
 							continue;
 					} else if (labelData.usage().readersAndWriters().noneMatch(m -> m.equals(value))) {
 						// Anything else like a label declaration or a jump instruction mentioning a label
 						// can be handled with a basic equality check against all the usage readers/writers.
 						continue;
 					}
+				}
+
+				// If we've gotten to this point we will need a canvas to draw the lines on.
+				if (canvas == null) {
+					canvas = new CachingPixelCanvas(pixelPainter, (int) width, (int) height);
+					canvas.setManaged(false);
+					canvas.setMouseTransparent(true);
+					canvas.resize(width, height);
+
+					// Setup canvas styling for the render mode.
+					var renderMode = config.getRenderMode().getValue();
+					Blend blend = new Blend(BlendMode.HARD_LIGHT);
+					Effect effect = switch (renderMode) {
+						case FLAT -> blend;
+						case RAINBOW_GLOWING, FLAT_GLOWING -> {
+							Bloom bloom = new Bloom(0.2);
+							Glow glow = new Glow(0.7);
+							bloom.setInput(blend);
+							glow.setInput(bloom);
+							yield glow;
+						}
+					};
+					canvas.setEffect(effect);
+					if (renderMode == ControlFlowLinesConfig.LineRenderMode.RAINBOW_GLOWING) {
+						setupRainbowAnimation(effect, canvas).play();
+					}
+
+					container.getChildren().add(canvas);
 				}
 
 				// There is always one 'reader' AKA the label itself.
@@ -384,10 +429,11 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 				int offsetIndex = lineSlot % offsets.length;
 				int horizontalOffset = offsetIndex >= 0 && offsetIndex < offsets.length ? offsets[offsetIndex] : 1;
 				double hue = 360.0 / parallelLines * lineSlot;
-				Color color = createColor(hue);
+				int color = createColor(hue);
+				final int lineWidth = 1;
 
 				// Mask for tracking which portions of the jump lines have been drawn.
-				BitSet shapeMask = new BitSet(3);
+				int shapeMask = 0;
 
 				// Iterate over AST elements that refer to the label.
 				// We will use their position and the label declaration position to determine what shape to draw.
@@ -399,8 +445,6 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 					int referenceLine = referenceLoc.line() - 1;
 					boolean isBackReference = referenceLine > declarationLine;
 
-					gc.setStroke(color);
-					gc.beginPath();
 					boolean multiLine = labelData.countRefsOnLine(referenceLine) > 0;
 					double targetY = multiLine ? horizontalOffset : height / 2;
 					if (referenceLine == paragraph) {
@@ -410,77 +454,72 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 						// Right section
 						if (isBackReference) {
 							// Shape: └
-							if (!shapeMask.get(MASK_NORTH)) {
+							if ((shapeMask & MASK_NORTH) == 0) {
 								// Top section
-								gc.moveTo(horizontalOffset, 0);
-								gc.lineTo(horizontalOffset, targetY);
-								shapeMask.set(MASK_NORTH);
+								canvas.drawVerticalLine(horizontalOffset, 0, targetY, lineWidth, color);
+								shapeMask |= MASK_NORTH;
 							}
 						} else {
 							// Shape: ┌
-							if (!shapeMask.get(MASK_SOUTH)) {
+							if ((shapeMask & MASK_SOUTH) == 0) {
 								// Bottom section
-								gc.moveTo(horizontalOffset, height);
-								gc.lineTo(horizontalOffset, targetY);
-								shapeMask.set(MASK_SOUTH);
+								canvas.drawVerticalLine(horizontalOffset, targetY, height - targetY, lineWidth, color);
+								shapeMask |= MASK_SOUTH;
 							}
 						}
-						if (!shapeMask.get(MASK_EAST)) {
+						if ((shapeMask & MASK_EAST) == 0) {
 							// Right section
-							gc.moveTo(horizontalOffset, targetY);
-							gc.lineTo(width, targetY);
-							shapeMask.set(MASK_EAST);
+							canvas.drawHorizontalLine(horizontalOffset, targetY, width - horizontalOffset, lineWidth, color);
+							shapeMask |= MASK_EAST;
 						}
-						gc.stroke();
+						canvas.commit();
 					} else if (paragraph == declarationLine) {
 						// Right section
 						if (isBackReference) {
 							// Shape: ┌
-							if (!shapeMask.get(MASK_SOUTH)) {
+							if ((shapeMask & MASK_SOUTH) == 0) {
 								// Bottom section
-								gc.moveTo(horizontalOffset, height);
-								gc.lineTo(horizontalOffset, targetY);
-								shapeMask.set(MASK_SOUTH);
+								canvas.drawVerticalLine(horizontalOffset, targetY, height - targetY, lineWidth, color);
+								shapeMask |= MASK_SOUTH;
 							}
 						} else {
 							// Shape: └
-							if (!shapeMask.get(MASK_NORTH)) {
+							if ((shapeMask & MASK_NORTH) == 0) {
 								// Top section
-								gc.moveTo(horizontalOffset, 0);
-								gc.lineTo(horizontalOffset, targetY);
-								shapeMask.set(MASK_NORTH);
+								canvas.drawVerticalLine(horizontalOffset, 0, targetY, lineWidth, color);
+								shapeMask |= MASK_NORTH;
 							}
 						}
-						if (!shapeMask.get(MASK_EAST)) {
+						if ((shapeMask & MASK_EAST) == 0) {
 							// Right section
-							gc.moveTo(horizontalOffset, targetY);
-							gc.lineTo(width, targetY);
-							shapeMask.set(MASK_EAST);
+							canvas.drawHorizontalLine(horizontalOffset, targetY, width - horizontalOffset, lineWidth, color);
+							shapeMask |= MASK_EAST;
 						}
-						gc.stroke();
+						canvas.commit();
 					} else if ((isBackReference && (paragraph > declarationLine && paragraph < referenceLine)) ||
 							(!isBackReference && (paragraph < declarationLine && paragraph > referenceLine))) {
-						if (!shapeMask.get(MASK_NORTH)) {
+						if ((shapeMask & MASK_NORTH) == 0) {
 							// Top section
-							gc.moveTo(horizontalOffset, 0);
-							gc.lineTo(horizontalOffset, height / 2);
-							shapeMask.set(MASK_NORTH);
+							canvas.drawVerticalLine(horizontalOffset, 0, height / 2, lineWidth, color);
+							shapeMask |= MASK_NORTH;
 						}
-						if (!shapeMask.get(MASK_SOUTH)) {
+						if ((shapeMask & MASK_SOUTH) == 0) {
 							// Bottom section
-							gc.moveTo(horizontalOffset, height / 2);
-							gc.lineTo(horizontalOffset, height);
-							shapeMask.set(MASK_SOUTH);
+							canvas.drawVerticalLine(horizontalOffset, height / 2, height / 2, lineWidth, color);
+							shapeMask |= MASK_SOUTH;
 						}
-						gc.stroke();
+						canvas.commit();
 					}
-					gc.closePath();
 				}
 			}
 		}
 
-		@Nonnull
-		private static Color createColor(double hue) {
+		public void cleanup() {
+			recyclers.clear();
+			switchDestinations.clear();
+		}
+
+		private static int createColor(double hue) {
 			Color color = Color.hsb(hue, 1.0, 1.0);
 
 			// Ensure the color is actually bright enough.
@@ -498,11 +537,11 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 				i++;
 			}
 
-			return color;
+			return Colors.argb(color);
 		}
 
 		@Nonnull
-		private Transition setupRainbowAnimation(@Nonnull Effect effect, @Nonnull Canvas canvas) {
+		private Transition setupRainbowAnimation(@Nonnull Effect effect, @Nonnull Node node) {
 			return new Transition() {
 				{
 					setInterpolator(Interpolator.LINEAR);
@@ -519,9 +558,98 @@ public class ControlFlowLines extends AstBuildConsumerComponent {
 					float hue = Math.abs((4 * diff / rainbowHueRotationDurationMillis) - 2) - 1;
 					ColorAdjust adjust = new ColorAdjust(hue, 0.0, 0.0, 0.0);
 					adjust.setInput(effect);
-					canvas.setEffect(adjust);
+					node.setEffect(adjust);
 				}
 			};
+		}
+
+		/**
+		 * @param width
+		 * 		Image width.
+		 * @param height
+		 * 		Image height.
+		 *
+		 * @return An image recycler for the given dimensions.
+		 */
+		@Nonnull
+		private ImageRecycler getRecycler(int width, int height) {
+			int key = width << 16 | height;
+			return recyclers.computeIfAbsent(key, i -> new ImageRecycler(width, height));
+		}
+
+		/**
+		 * Ring buffer of {@link WritableImage} keyed to a specific width/height.
+		 */
+		private static class ImageRecycler {
+			private static final int MAX_IMAGE_BUFFER;
+			private final List<WritableImage> images = new ArrayList<>(MAX_IMAGE_BUFFER);
+			private final int width, height;
+			private int index;
+
+			static {
+				// Each row is ~18px so if we divide the screen height by that amount we should
+				// get the number of images needed to not visually show that they're recycled.
+				//
+				// Of course, we want to have some leeway, so we'll round ~18px down a bit.
+				// And if the UI scale property is assigned, we'll also accommodate for that.
+				Number scale = Unchecked.getOr(() -> NumberUtil.parse(System.getProperty("sun.java2d.uiScale", "1.0")), 1);
+				double scaledHeight = DesktopUtil.getLargestScreenSize().height * scale.doubleValue();
+				final double rowHeight = 15D;
+				final double minRows = 72; // I have ~60 rows on a 1080p monitor so this is probably common enough fallback.
+				MAX_IMAGE_BUFFER = (int) Math.max(minRows, scaledHeight / rowHeight);
+			}
+
+			/**
+			 * @param width
+			 * 		Width of images to create.
+			 * @param height
+			 * 		Height of images to create.
+			 */
+			public ImageRecycler(int width, int height) {
+				this.width = width;
+				this.height = height;
+			}
+
+			/**
+			 * @return Next available image.
+			 */
+			@Nonnull
+			public WritableImage next() {
+				if (index >= MAX_IMAGE_BUFFER)
+					index = 0;
+				WritableImage image;
+				if (index >= images.size()) {
+					image = new WritableImage(width, height);
+					images.add(image);
+				} else {
+					image = images.get(index);
+				}
+				index++;
+				return image;
+			}
+		}
+
+		/**
+		 * Canvas implementation that recycles backing images via {@link ImageRecycler}.
+		 */
+		private class CachingPixelCanvas extends PixelCanvas {
+			public CachingPixelCanvas(@Nonnull PixelPainter<?> pixelPainter, int width, int height) {
+				super(pixelPainter, width, height);
+			}
+
+			@Nonnull
+			@Override
+			protected WritableImage newImage(int width, int height) {
+				return getRecycler(width, height).next();
+			}
+		}
+	}
+
+	@SuppressWarnings("rawtypes")
+	private class ListenerHost implements ChangeListener {
+		@Override
+		public void changed(AbstractObservable ob, Object old, Object current) {
+			if (editor != null) editor.redrawParagraphGraphics();
 		}
 	}
 }

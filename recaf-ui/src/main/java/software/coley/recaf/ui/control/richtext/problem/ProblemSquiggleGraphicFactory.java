@@ -1,12 +1,14 @@
 package software.coley.recaf.ui.control.richtext.problem;
 
 import jakarta.annotation.Nonnull;
-import javafx.scene.canvas.Canvas;
-import javafx.scene.control.Tooltip;
 import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
+import software.coley.bentofx.control.canvas.PixelCanvas;
+import software.coley.bentofx.control.canvas.PixelPainter;
+import software.coley.bentofx.control.canvas.PixelPainterIntArgb;
 import software.coley.recaf.ui.control.richtext.linegraphics.AbstractTextBoundLineGraphicFactory;
 import software.coley.recaf.ui.control.richtext.linegraphics.LineGraphicFactory;
+import software.coley.recaf.util.Colors;
 
 import java.util.List;
 
@@ -18,12 +20,14 @@ import java.util.List;
  * @see ProblemTracking
  */
 public class ProblemSquiggleGraphicFactory extends AbstractTextBoundLineGraphicFactory {
+	private final PixelPainter<?> pixelPainter = new PixelPainterIntArgb();
+
 	public ProblemSquiggleGraphicFactory() {
 		super(LineGraphicFactory.P_LINE_PROBLEM_SQUIGGLES);
 	}
 
 	@Override
-	protected void apply(StackPane pane, int paragraph) {
+	protected void apply(@Nonnull StackPane pane, int paragraph) {
 		if (editor.getProblemTracking() == null)
 			return;
 
@@ -51,21 +55,19 @@ public class ProblemSquiggleGraphicFactory extends AbstractTextBoundLineGraphicF
 		double toStart = editor.computeWidthUntilCharacter(paragraph, index);
 		double toEnd = editor.computeWidthUntilCharacter(paragraph, index + problem.length());
 		toEnd = Math.max(toEnd, toStart + 6);
-		double errorWidth = toEnd - toStart;
+		int errorWidth = (int) (toEnd - toStart);
 
 		// Create the overlay
-		Canvas canvas = new Canvas(errorWidth, containerHeight);
+		PixelCanvas canvas = new PixelCanvas(pixelPainter, errorWidth, containerHeight);
 		canvas.setManaged(false);
 		canvas.setMouseTransparent(true);
-		canvas.setTranslateY(3);
-		canvas.setTranslateX(toStart + 1.7);
+		canvas.resize(errorWidth, containerHeight);
+		canvas.setTranslateX(toStart);
+		canvas.setTranslateY(2);
 
 		pane.getChildren().add(canvas);
 
 		drawWaves(canvas, problem.level() == ProblemLevel.WARN, errorWidth);
-
-		Tooltip tooltip = new Tooltip(problem.message());
-		Tooltip.install(canvas, tooltip);
 	}
 
 	/**
@@ -78,14 +80,11 @@ public class ProblemSquiggleGraphicFactory extends AbstractTextBoundLineGraphicF
 	 * @param width
 	 * 		Length of waves to draw.
 	 */
-	private void drawWaves(@Nonnull Canvas canvas, boolean warn, double width) {
-		var gc = canvas.getGraphicsContext2D();
-
+	private void drawWaves(@Nonnull PixelCanvas canvas, boolean warn, double width) {
 		// Make a solid yellow/red line based on error level
-		gc.setStroke(warn ? Color.YELLOW : Color.RED);
-		gc.setLineWidth(1);
-		gc.beginPath();
+		int color = Colors.argb(warn ? Color.YELLOW : Color.RED);
 
+		/* // TODO: Reimplement squiggle drawing with the more simple PixelCanvas
 		// wave heights
 		final double scalingFactor = .7;
 		final double waveUp = containerHeight - 3 * scalingFactor;
@@ -105,9 +104,10 @@ public class ProblemSquiggleGraphicFactory extends AbstractTextBoundLineGraphicF
 				gc.lineTo(x + halfStep, waveDown);
 			if (x < upStop)
 				gc.lineTo(x + step, waveUp);
-		}
+		}*/
 
-		gc.stroke();
-		gc.closePath();
+		final int lineWidth = 1;
+		canvas.drawHorizontalLine(0, containerHeight - lineWidth, width, lineWidth, color);
+		canvas.commit();
 	}
 }
