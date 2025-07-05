@@ -20,6 +20,7 @@ import software.coley.recaf.services.transform.JvmClassTransformer;
 import software.coley.recaf.services.transform.JvmTransformerContext;
 import software.coley.recaf.services.transform.TransformationException;
 import software.coley.recaf.services.workspace.WorkspaceManager;
+import software.coley.recaf.util.AsmInsnUtil;
 import software.coley.recaf.util.analysis.value.IntValue;
 import software.coley.recaf.util.analysis.value.ObjectValue;
 import software.coley.recaf.util.analysis.value.ReValue;
@@ -80,7 +81,7 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 				AbstractInsnNode instruction = instructions.get(i);
 				if (instruction instanceof TableSwitchInsnNode switchInsn && isSwitchEffectiveGoto(switchInsn)) {
 					AbstractInsnNode previous = switchInsn.getPrevious();
-					if (isSupportedValueProducer(previous))
+					if (isValueProducerOrTopDup(previous))
 						instructions.remove(previous);
 					else
 						instructions.insertBefore(switchInsn, new InsnNode(POP));
@@ -88,7 +89,7 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 					dirty = true;
 				} else if (instruction instanceof LookupSwitchInsnNode switchInsn && isSwitchEffectiveGoto(switchInsn)) {
 					AbstractInsnNode previous = switchInsn.getPrevious();
-					if (isSupportedValueProducer(previous))
+					if (isValueProducerOrTopDup(previous))
 						instructions.remove(previous);
 					else
 						instructions.insertBefore(switchInsn, new InsnNode(POP));
@@ -122,8 +123,8 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 
 					// Get instruction of the top stack's contributing instruction.
 					// It must also be a value producing instruction.
-					AbstractInsnNode prevInstruction = instructions.get(i - 1);
-					if (!isSupportedValueProducer(prevInstruction))
+					AbstractInsnNode prevInstruction = AsmInsnUtil.getPreviousInsn(instruction);
+					if (prevInstruction == null || !isValueProducerOrTopDup(prevInstruction))
 						continue;
 
 					// Handle any control flow instruction and see if we know based on the frame contents if a specific
@@ -164,7 +165,7 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 							// Skip if the other argument to compare with is not immediately backed by
 							// a value supplying instruction.
 							AbstractInsnNode prevPrevInstruction = prevInstruction.getPrevious();
-							if (prevPrevInstruction == null || !isSupportedValueProducer(prevPrevInstruction))
+							if (prevPrevInstruction == null || !isValueProducerOrTopDup(prevPrevInstruction))
 								continue;
 
 							// Replace double argument binary control flow.
@@ -326,6 +327,14 @@ public class OpaquePredicateFoldingTransformer implements JvmClassTransformer {
 			return true;
 		}
 		return false;
+	}
+
+	private static boolean isValueProducerOrTopDup(@Nonnull AbstractInsnNode insnNode) {
+		if (isSupportedValueProducer(insnNode))
+			return true;
+
+		int op = insnNode.getOpcode();
+		return op == DUP || op == DUP2;
 	}
 
 	@Nonnull

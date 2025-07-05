@@ -6,7 +6,6 @@ import software.coley.recaf.services.deobfuscation.transform.generic.DeadCodeRem
 import software.coley.recaf.services.deobfuscation.transform.generic.GotoInliningTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.LinearOpaqueConstantFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.OpaquePredicateFoldingTransformer;
-import software.coley.recaf.services.deobfuscation.transform.generic.StackOperationFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.VariableFoldingTransformer;
 import software.coley.recaf.util.StringUtil;
 
@@ -149,6 +148,857 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
 			assertEquals(1, StringUtil.count("lconst_0", dis), "Expected to fold to 0L");
 		});
+	}
+
+	@Test
+	void foldIntMathWithSwap() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        swap
+				        ishl
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("swap", dis), "Expected to stack operation");
+			assertEquals(0, StringUtil.count("ishl", dis), "Expected to math operation");
+			assertEquals(1, StringUtil.count("bipush 16", dis), "Expected to fold to 16 from (2 << 3)");
+		});
+
+		// Same thing but with two swaps
+		asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        swap
+				        swap
+				        ishl
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("swap", dis), "Expected to stack operation");
+			assertEquals(0, StringUtil.count("ishl", dis), "Expected to math operation");
+			assertEquals(1, StringUtil.count("bipush 12", dis), "Expected to fold to 16 from (3 << 2)");
+		});
+
+		// Same thing but with three swaps
+		asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        swap
+				        swap
+				        swap
+				        ishl
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("swap", dis), "Expected to stack operation");
+			assertEquals(0, StringUtil.count("ishl", dis), "Expected to math operation");
+			assertEquals(1, StringUtil.count("bipush 16", dis), "Expected to fold to 16 from (2 << 3)");
+		});
+	}
+
+	@Test
+	void foldLongWithDup2NotConfusedByPrecedingIntOnStack() {
+		// Ensures that the stack dup2 operation folds correctly:
+		//  [int, long] --> [int, long, long]
+		// The preceding int shouldn't confuse the fold logic.
+		String asm = """
+				.method public static example ()J {
+				    code: {
+				    A:
+				        iconst_0
+				        // 1L + 1L = 2L
+				        lconst_1
+				        dup2
+				        ladd
+				        // Store var so that we can pop the int off the stack
+				        lstore tmp
+				        pop
+				        lload tmp
+				        lreturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("lconst_1", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("dup2", dis), "Expected to stack operation");
+			assertEquals(0, StringUtil.count("ladd", dis), "Expected to operation");
+			assertEquals(1, StringUtil.count("ldc 2L", dis), "Expected to fold stack operation to 2L");
+		});
+	}
+
+	@Test
+	void foldLongWithDup2X1NotConfusedByPrecedingIntOnStack() {
+		// Ensures that the stack dup2_x1 operation folds correctly:
+		//  [int, long] --> [long, int, long]
+		// The preceding int shouldn't confuse the stack simplification logic.
+		// This in turn will allow the value folding step to fold the whole method.
+		String asm = """
+				.method public static example ()J {
+				    code: {
+				    A:
+				        iconst_0
+				        lconst_1
+				        dup2_x1
+				        // Store var so that we can pop the int off the stack
+				        lstore tmp
+				        pop
+				        lconst_1
+				        ladd
+				        // The duplicated long below the int should be all that remains
+				        lreturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("lconst_1", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("iconst_0", dis), "Expected to fold inputs");
+			assertEquals(1, StringUtil.count("ldc 2L", dis), "Expected to fold stack operation to 2L");
+		});
+	}
+
+	@Test
+	void foldPopsToNothing() {
+		String asm = """
+				.method public static example ()V {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        iconst_1
+				        pop2
+				        pop
+				        return
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("pop", dis), "Expected to remove pop operations");
+		});
+	}
+
+	@Test
+	void foldPopsWithDupX1ToNothing() {
+		String asm = """
+				.method public static example ()V {
+				    code: {
+				    A:
+				        iconst_2
+				        iconst_1
+				        dup_x1
+				        pop2
+				        pop
+				        return
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("pop", dis), "Expected to remove pop operations");
+		});
+	}
+
+	@Test
+	void foldPopsWithDupX2ToNothing() {
+		String asm = """
+				.method public static example ()V {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        iconst_1
+				        dup_x1
+				        pop2
+				        pop2
+				        return
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("pop", dis), "Expected to remove pop operations");
+		});
+	}
+
+	@Test
+	void foldPopsWithDup2X1ToNothing() {
+		String asm = """
+				.method public static example ()V {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        iconst_1
+				        dup2_x1
+				        pop2
+				        pop2
+				        pop
+				        return
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("pop", dis), "Expected to remove pop operations");
+		});
+	}
+
+	@Test
+	void foldPopsWithDup2X2ToNothing() {
+		String asm = """
+				.method public static example ()V {
+				    code: {
+				    A:
+				        iconst_4
+				        iconst_3
+				        iconst_2
+				        iconst_1
+				        dup2_x2
+				        pop2
+				        pop2
+				        pop2
+				        return
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to remove redundant popped values");
+			assertEquals(0, StringUtil.count("pop", dis), "Expected to remove pop operations");
+		});
+	}
+
+	@Test
+	void foldMathWithSwapPop() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+						iconst_1
+						iconst_4
+						bipush 9
+						swap
+						pop
+						iadd
+						ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("swap", dis), "Expected to fold stack swapping");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold addition");
+			assertEquals(1, StringUtil.count("bipush 10", dis), "Expected to fold to 10 from 9+1");
+		});
+	}
+
+	@Test
+	void foldWithDup2() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        dup2
+				        iadd
+				        iadd
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold stack duplication");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold addition");
+			assertEquals(1, StringUtil.count("bipush 10", dis), "Expected to fold to 10 from (3+2)*2");
+		});
+	}
+
+	@Test
+	void foldWithDup2Pop() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        dup2
+				        pop
+				        iadd
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold stack duplication");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold addition");
+			assertEquals(1, StringUtil.count("bipush 8", dis), "Expected to fold to 8 from (3+2+3)");
+		});
+	}
+
+	@Test
+	void foldWithDup2X1() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_1
+				        iconst_1
+				        iconst_1
+				        dup2_x1
+				        iadd
+				        iadd
+				        iadd
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst_1", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold stack duplication");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold addition");
+			assertEquals(1, StringUtil.count("iconst_5", dis), "Expected to fold to 5 from 1+1+1+1+1");
+		});
+	}
+
+	@Test
+	void foldWithDup2X1Pop() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_3
+				        iconst_2
+				        iconst_1
+				        dup2_x1
+				        pop2
+				        iadd
+				        imul
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold stack duplication");
+			assertEquals(0, StringUtil.count("pop", dis), "Expected to fold stack popping");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold addition");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold multiplication");
+			assertEquals(1, StringUtil.count("bipush 8", dis), "Expected to fold to 8 from (3+1)*2");
+		});
+	}
+
+	@Test
+	void fold1Plus1() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_1
+				        iconst_1
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst_1", dis), "Expected to fold inputs");
+			assertEquals(1, StringUtil.count("iconst_2", dis), "Expected to fold to 2 from 1+1");
+		});
+	}
+
+	@Test
+	void foldWithDup2X2Pop() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        iconst_4
+				        iconst_3
+				        iconst_2
+				        iconst_1
+				        dup2_x2
+				        iadd
+				        imul
+				        swap
+				        pop
+				        iadd
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold stack duplication");
+			assertEquals(0, StringUtil.count("pop", dis), "Expected to fold stack popping");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold addition");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold multiplication");
+			assertEquals(1, StringUtil.count("bipush 12", dis), "Expected to fold to 12 from ((2+1)*3)+1+2");
+		});
+	}
+
+	@Test
+	void foldWithDupX1() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        bipush 10
+				        iconst_5
+				        dup_x1
+				        imul
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold stack duplication");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold addition");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold multiplication");
+			assertEquals(1, StringUtil.count("bipush 55", dis), "Expected to fold to 55 from (10*5)+5");
+		});
+	}
+
+	@Test
+	void foldWithDupX2() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        bipush 15
+				        bipush 8
+				        iconst_2
+				        dup_x2
+				        iadd
+				        iadd
+				        imul
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold stack duplication");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold addition");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold multiplication");
+			assertEquals(1, StringUtil.count("bipush 50", dis), "Expected to fold to 50 from (2+8+15)*2");
+		});
+	}
+
+	@Test
+	void foldRedundantOperationOnUnknownValue() {
+		String asm = """
+				.method public static example (I)I {
+					parameters: { a },
+					code: {
+				    A:
+				        iload a
+				        iconst_0
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst_0", dis), "Expected to fold redundant operation inputs");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold redundant operation");
+		});
+
+		asm = """
+				.method public static example (I)I {
+					parameters: { a },
+					code: {
+				    A:
+				        iconst_0
+				        iload a
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst_0", dis), "Expected to fold redundant operation inputs");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold redundant operation");
+		});
+
+		asm = """
+				.method public static example (I)I {
+					parameters: { a },
+					code: {
+				    A:
+				        iload a
+				        iconst_0
+				        swap
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst_0", dis), "Expected to fold redundant operation inputs");
+			assertEquals(0, StringUtil.count("swap", dis), "Expected to fold redundant input swapping");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold redundant operation");
+		});
+
+		asm = """
+				.method public static example (I)I {
+					parameters: { a },
+					code: {
+				    A:
+				        iload a
+				        iconst_0
+				        swap
+				        swap
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst_0", dis), "Expected to fold redundant operation inputs");
+			assertEquals(0, StringUtil.count("swap", dis), "Expected to fold redundant input swapping");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold redundant operation");
+		});
+
+		asm = """
+				.method public static example (I)I {
+					parameters: { a },
+					code: {
+				    A:
+				        iload a
+				        iconst_0
+				        swap
+				        swap
+				        swap
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst_0", dis), "Expected to fold redundant operation inputs");
+			assertEquals(0, StringUtil.count("swap", dis), "Expected to fold redundant input swapping");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold redundant operation");
+		});
+	}
+
+	@Test
+	void foldWhenUnknownValueMultipliedByZero() {
+		String asm = """
+				.method public static example (I)I {
+					parameters: { a },
+					code: {
+				    A:
+				        iload a
+				        iconst_0
+				        imul
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iload", dis), "Expected to fold redundant operation inputs");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold redundant operation");
+			assertEquals(1, StringUtil.count("iconst_0", dis), "Expected to keep zero as output");
+		});
+	}
+
+	@Test
+	void foldDoubleDup2X1() {
+		String asm = """
+				.method public static example (I)I {
+					parameters: { a },
+					code: {
+				    A:
+				        iload a
+				        dconst_0
+				        dup2_x1
+				        pop2
+				        i2d
+				        dmul
+				        d2i
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iload", dis), "Expected to fold redundant operation inputs");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold redundant operation");
+			assertEquals(1, StringUtil.count("iconst_0", dis), "Expected to keep zero as output");
+		});
+	}
+
+	@Test
+	void foldDoubleDup2X2() {
+		String asm = """
+				.method public static example (D)I {
+					parameters: { a },
+					code: {
+				    A:
+				        dload a
+				        dconst_0
+				        dup2_x2
+				        pop2
+				        dmul
+				        d2i
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iload", dis), "Expected to fold redundant operation inputs");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold redundant operation");
+			assertEquals(1, StringUtil.count("iconst_0", dis), "Expected to keep zero as output");
+		});
+	}
+
+	@Test
+	void foldWithMultipleDupsSwapsAndOperations() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        ldc -2556828284053591649L
+				        ldc 2556828284013841450L
+				        lxor
+				        l2i
+				        ldc -415261744
+				        i2l
+				        ldc 1102084415
+				        i2l
+				        lxor
+				        l2i
+				        dup2
+				        dup_x1
+				        ineg
+				        iconst_m1
+				        iadd
+				        swap
+				        dup_x1
+				        iconst_m1
+				        ixor
+				        ior
+				        swap
+				        iconst_m1
+				        ixor
+				        isub
+				        iadd
+				        dup_x2
+				        pop
+				        iconst_1
+				        isub
+				        iconst_m1
+				        ixor
+				        iconst_m1
+				        iadd
+				        swap
+				        iconst_1
+				        isub
+				        iconst_m1
+				        ixor
+				        iconst_m1
+				        iadd
+				        dup_x1
+				        ineg
+				        iconst_m1
+				        iadd
+				        swap
+				        dup_x1
+				        iconst_m1
+				        ixor
+				        ior
+				        swap
+				        iconst_m1
+				        ixor
+				        isub
+				        iadd
+				        swap
+				        dup_x1
+				        ineg
+				        iconst_m1
+				        iadd
+				        dup_x1
+				        iconst_m1
+				        ixor
+				        iand
+				        iadd
+				        swap
+				        ineg
+				        iconst_m1
+				        iadd
+				        isub
+				        i2l
+				        ldc -6788200298164900932L
+				        ldc -6788200298671981035L
+				        lxor
+				        l2i
+				        ldc -1757344751
+				        i2l
+				        ldc -1441456414
+				        i2l
+				        lxor
+				        l2i
+				        dup2
+				        dup_x1
+				        ineg
+				        iconst_m1
+				        iadd
+				        swap
+				        dup_x1
+				        iconst_m1
+				        ixor
+				        ior
+				        swap
+				        iconst_m1
+				        ixor
+				        isub
+				        iadd
+				        dup_x2
+				        pop
+				        swap
+				        dup_x1
+				        ineg
+				        iconst_m1
+				        iadd
+				        dup_x1
+				        iconst_m1
+				        ixor
+				        iand
+				        iadd
+				        swap
+				        ineg
+				        iconst_m1
+				        iadd
+				        isub
+				        isub
+				        i2l
+				        lxor
+				        l2i
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateBeforeAfterDecompile(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), "return (", "return 0;");
+	}
+
+	@Test
+	void foldRedundantOperatorsOnParameterToParameter() {
+		String asm = """
+				.method public static example (I)I {
+					parameters: { a },
+				    code: {
+				    A:
+				        iload a
+				        iconst_0
+				        dup2
+				        swap
+				        imul
+				        iadd
+				        iadd
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iconst", dis), "Expected to fold redundant inputs");
+			assertEquals(0, StringUtil.count("iadd", dis), "Expected to fold redundant operations");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold redundant operations");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold redundant operations");
+		});
+		validateBeforeAfterDecompile(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), "return ", "return a;");
+	}
+
+	@Test
+	void foldDupSwappingUnknownValueMultipliedBy0To0() {
+		String asm = """
+				.method public static example (I)I {
+					parameters: { a },
+				    code: {
+				    A:
+				        iload a
+				        iconst_0
+				        // [a, 0]
+				        dup2
+				        // [a, 0, a, 0]
+				        swap
+				        // [a, 0, a, 0]
+				        imul
+				        // [a, 0, 0]
+				        imul
+				        // [a, 0]
+				        imul
+				        // [0]
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), dis -> {
+			assertEquals(0, StringUtil.count("iload", dis), "Expected to fold inputs");
+			assertEquals(0, StringUtil.count("imul", dis), "Expected to fold redundant operations");
+			assertEquals(0, StringUtil.count("dup", dis), "Expected to fold redundant operations");
+			assertEquals(1, StringUtil.count("iconst_0", dis), "Expected to fold to 0");
+		});
+		validateBeforeAfterDecompile(asm, List.of(LinearOpaqueConstantFoldingTransformer.class), "return ", "return 0;");
 	}
 
 	@Test
@@ -1035,7 +1885,7 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 		});
 	}
 
-	/** Showcase pairing of {@link VariableFoldingTransformer} with {@link StackOperationFoldingTransformer} */
+	/** Showcase pairing of {@link VariableFoldingTransformer} with {@link LinearOpaqueConstantFoldingTransformer} */
 	@Test
 	void foldVar() {
 		String asm = """
@@ -1061,7 +1911,7 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 				    }
 				}
 				""";
-		validateAfterAssembly(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class), dis -> {
+		validateAfterAssembly(asm, List.of(VariableFoldingTransformer.class, LinearOpaqueConstantFoldingTransformer.class), dis -> {
 			assertEquals(0, StringUtil.count("istore unused", dis), "Expected to remove variable stores where no reads are used");
 			assertEquals(0, StringUtil.count("bipush", dis), "Expected to remove unused value pushes of variables");
 			assertEquals(0, StringUtil.count("zero", dis), "Expected to inline 'zero' variable");
@@ -1094,7 +1944,7 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 		validateAfterAssembly(asm, List.of(
 				VariableFoldingTransformer.class,
 				OpaquePredicateFoldingTransformer.class,
-				StackOperationFoldingTransformer.class,
+				LinearOpaqueConstantFoldingTransformer.class,
 				GotoInliningTransformer.class
 		), dis -> {
 			assertEquals(1, StringUtil.count("iconst", dis), "Expected only one const");
@@ -1125,7 +1975,7 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 				    }
 				}
 				""";
-		validateAfterAssembly(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class,
+		validateAfterAssembly(asm, List.of(VariableFoldingTransformer.class, LinearOpaqueConstantFoldingTransformer.class,
 				LinearOpaqueConstantFoldingTransformer.class), dis -> {
 			assertEquals(0, StringUtil.count("istore", dis), "Expected to remove redundant istore");
 			assertEquals(0, StringUtil.count("iload", dis), "Expected to inline redundant iload");
@@ -1162,7 +2012,7 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 				    }
 				}
 				""";
-		validateAfterRepeatedAssembly(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class, LinearOpaqueConstantFoldingTransformer.class), dis -> {
+		validateAfterRepeatedAssembly(asm, List.of(VariableFoldingTransformer.class, LinearOpaqueConstantFoldingTransformer.class, LinearOpaqueConstantFoldingTransformer.class), dis -> {
 			assertEquals(0, StringUtil.count("const", dis), "Expected to remove redundant iconst_0");
 			assertEquals(0, StringUtil.count("load", dis), "Expected to remove redundant iload");
 			assertEquals(0, StringUtil.count("store", dis), "Expected to remove redundant istore");
@@ -1195,7 +2045,7 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 				    }
 				}
 				""";
-		validateNoTransformation(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class));
+		validateNoTransformation(asm, List.of(VariableFoldingTransformer.class, LinearOpaqueConstantFoldingTransformer.class));
 	}
 
 	/** Show {@link VariableFoldingTransformer} isn't too aggressive */
@@ -1228,7 +2078,7 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 				    }
 				}
 				""";
-		validateNoTransformation(asm, List.of(VariableFoldingTransformer.class, StackOperationFoldingTransformer.class));
+		validateNoTransformation(asm, List.of(VariableFoldingTransformer.class, LinearOpaqueConstantFoldingTransformer.class));
 	}
 
 	@Test

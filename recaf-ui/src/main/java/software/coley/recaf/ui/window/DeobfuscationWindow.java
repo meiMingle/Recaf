@@ -32,8 +32,8 @@ import javafx.scene.text.TextAlignment;
 import me.darknet.assembler.error.Error;
 import org.kordamp.ikonli.Ikon;
 import org.kordamp.ikonli.carbonicons.CarbonIcons;
-import org.slf4j.Logger;
 import software.coley.collections.Unchecked;
+import software.coley.recaf.analytics.logging.DebuggingLogger;
 import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.info.ClassInfo;
 import software.coley.recaf.info.JvmClassInfo;
@@ -54,12 +54,13 @@ import software.coley.recaf.services.deobfuscation.transform.generic.IllegalVara
 import software.coley.recaf.services.deobfuscation.transform.generic.KotlinNameRestorationTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.LinearOpaqueConstantFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.LongAnnotationRemovingTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.LongExceptionRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.OpaquePredicateFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.RedundantTryCatchRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.SourceNameRestorationTransformer;
-import software.coley.recaf.services.deobfuscation.transform.generic.StackOperationFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.StaticValueInliningTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.VariableFoldingTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.VariableTableNormalizingTransformer;
 import software.coley.recaf.services.info.association.FileTypeSyntaxAssociationService;
 import software.coley.recaf.services.navigation.Actions;
 import software.coley.recaf.services.transform.ClassTransformer;
@@ -97,7 +98,7 @@ import java.util.stream.Collectors;
  */
 @Dependent
 public class DeobfuscationWindow extends RecafStage {
-	private static final Logger logger = Logging.get(DeobfuscationWindow.class);
+	private static final DebuggingLogger logger = Logging.get(DeobfuscationWindow.class);
 	private final TransformationManager transformationManager;
 	private final TransformationApplierService transformationApplierService;
 	private final DecompilerManager decompilerManager;
@@ -140,6 +141,7 @@ public class DeobfuscationWindow extends RecafStage {
 					CycleClassRemovingTransformer.class,
 					DuplicateAnnotationRemovingTransformer.class,
 					LongAnnotationRemovingTransformer.class,
+					LongExceptionRemovingTransformer.class,
 					IllegalAnnotationRemovingTransformer.class,
 					IllegalSignatureRemovingTransformer.class,
 					IllegalVarargsRemovingTransformer.class
@@ -152,9 +154,9 @@ public class DeobfuscationWindow extends RecafStage {
 					LinearOpaqueConstantFoldingTransformer.class,
 					OpaquePredicateFoldingTransformer.class,
 					RedundantTryCatchRemovingTransformer.class,
-					StackOperationFoldingTransformer.class,
 					StaticValueInliningTransformer.class,
-					VariableFoldingTransformer.class
+					VariableFoldingTransformer.class,
+					VariableTableNormalizingTransformer.class
 			));
 			TreeItem<Selection> restoration = new TreeItem<>(new Selection.Category("deobf.tree.generic.restoration", CarbonIcons.AI_RESULTS));
 			restoration.getChildren().addAll(of(
@@ -399,7 +401,7 @@ public class DeobfuscationWindow extends RecafStage {
 		SplitPane split = new SplitPane(transformerTreePane, transformerOrderPane, transformPreviewPane);
 		SplitPane.setResizableWithParent(transformerTreePane, false);
 		SplitPane.setResizableWithParent(transformerOrderPane, false);
-		split.setDividerPositions(0.35, 0.7);
+		split.setDividerPositions(0.3, 0.6);
 		split.setPadding(new Insets(4));
 		transformerTreePane.setPadding(new Insets(4));
 		transformerOrderPane.setPadding(new Insets(4));
@@ -468,13 +470,8 @@ public class DeobfuscationWindow extends RecafStage {
 		}
 
 		public void togglePreviewMode() {
-			if (isDecompilePreview()) {
-				setCenter(editorAssembly);
-				disassemble();
-			} else {
-				setCenter(editorDecompile);
-				updatePreview();
-			}
+			setCenter(isDecompilePreview() ? editorAssembly : editorDecompile);
+			updatePreview();
 		}
 
 		public boolean isDecompilePreview() {
@@ -490,7 +487,7 @@ public class DeobfuscationWindow extends RecafStage {
 
 		private void disassemble() {
 			if (classInfo == null) {
-				String text = Lang.get("deobf.preview.noselection");
+				String text = "// Preview: Disassembly\n" + Lang.get("deobf.preview.noselection");
 				editorAssembly.setText(text);
 				return;
 			}
@@ -517,7 +514,7 @@ public class DeobfuscationWindow extends RecafStage {
 
 		private void decompile() {
 			if (classInfo == null) {
-				String text = Lang.get("deobf.preview.noselection");
+				String text = "// Preview: Decompile\n" + Lang.get("deobf.preview.noselection");
 				editorDecompile.setText(text);
 				return;
 			}
@@ -532,6 +529,9 @@ public class DeobfuscationWindow extends RecafStage {
 			decompilerManager.decompile(workspaceManager.getCurrent(), jvmClass).whenCompleteAsync((result, error) -> {
 				if (result != null) {
 					editorDecompile.setText(result.getText());
+				} else if (error != null) {
+					String trace = StringUtil.traceToString(error);
+					editorDecompile.setText("/*\nDecompilation failure\n" + trace + "\n*/");
 				}
 			}, FxThreadUtil.executor());
 		}
@@ -553,8 +553,12 @@ public class DeobfuscationWindow extends RecafStage {
 					TransformationApplier applier = transformationApplierService.newApplierForCurrentWorkspace();
 					if (applier == null)
 						throw new TransformationException("No workspace is open");
+					applier.setMaxPasses(5); // TODO: Make this an input
 					JvmTransformResult result = applier
 							.transformJvm(transformers, (_, _, _, targetClass) -> targetClass.getName().equals(classInfo.getName()));
+					result.getTransformerFailures().forEach((_, map) -> map.forEach((transformer, error) -> {
+						logger.debugging(l -> l.warn("Transformer '{}' failure: ", transformer.getSimpleName(), error));
+					}));
 					if (!result.getTransformedClasses().isEmpty())
 						jvmClass = result.getTransformedClasses().values().iterator().next();
 				} catch (TransformationException e) {
