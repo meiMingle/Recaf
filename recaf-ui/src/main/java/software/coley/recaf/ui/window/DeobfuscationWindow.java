@@ -52,7 +52,7 @@ import software.coley.recaf.services.deobfuscation.transform.generic.IllegalAnno
 import software.coley.recaf.services.deobfuscation.transform.generic.IllegalSignatureRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.IllegalVarargsRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.KotlinNameRestorationTransformer;
-import software.coley.recaf.services.deobfuscation.transform.generic.LinearOpaqueConstantFoldingTransformer;
+import software.coley.recaf.services.deobfuscation.transform.generic.OpaqueConstantFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.LongAnnotationRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.LongExceptionRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.OpaquePredicateFoldingTransformer;
@@ -98,6 +98,7 @@ import java.util.stream.Collectors;
  */
 @Dependent
 public class DeobfuscationWindow extends RecafStage {
+	private static final int MAX_PASSES = 5; // TODO: Make this an input
 	private static final DebuggingLogger logger = Logging.get(DeobfuscationWindow.class);
 	private final TransformationManager transformationManager;
 	private final TransformationApplierService transformationApplierService;
@@ -151,7 +152,7 @@ public class DeobfuscationWindow extends RecafStage {
 					DeadCodeRemovingTransformer.class,
 					DuplicateCatchMergingTransformer.class,
 					GotoInliningTransformer.class,
-					LinearOpaqueConstantFoldingTransformer.class,
+					OpaqueConstantFoldingTransformer.class,
 					OpaquePredicateFoldingTransformer.class,
 					RedundantTryCatchRemovingTransformer.class,
 					StaticValueInliningTransformer.class,
@@ -373,6 +374,7 @@ public class DeobfuscationWindow extends RecafStage {
 						.toList());
 				try {
 					working.set(true);
+					applier.setMaxPasses(MAX_PASSES);
 					JvmTransformResult result = applier.transformJvm(list);
 					result.apply();
 					FxThreadUtil.run(this::hide);
@@ -553,7 +555,7 @@ public class DeobfuscationWindow extends RecafStage {
 					TransformationApplier applier = transformationApplierService.newApplierForCurrentWorkspace();
 					if (applier == null)
 						throw new TransformationException("No workspace is open");
-					applier.setMaxPasses(5); // TODO: Make this an input
+					applier.setMaxPasses(MAX_PASSES);
 					JvmTransformResult result = applier
 							.transformJvm(transformers, (_, _, _, targetClass) -> targetClass.getName().equals(classInfo.getName()));
 					result.getTransformerFailures().forEach((_, map) -> map.forEach((transformer, error) -> {
