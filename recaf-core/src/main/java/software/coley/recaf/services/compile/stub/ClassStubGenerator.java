@@ -211,10 +211,14 @@ public abstract class ClassStubGenerator {
 			if (doSkipMethod(name, localMethodType))
 				continue;
 
-			// Skip enum's 'valueOf'
+			// Skip enum's 'valueOf' + 'values'
 			if (isEnum &&
 					name.equals("valueOf") &&
 					descriptor.equals("(Ljava/lang/String;)L" + className + ";"))
+				continue;
+			if (isEnum &&
+					name.equals("values") &&
+					descriptor.equals("()[L" + className + ";"))
 				continue;
 
 			// Skip stubbing of methods with bad return types / bad parameter types.
@@ -517,6 +521,10 @@ public abstract class ClassStubGenerator {
 		// Sanity check input
 		if (name.indexOf('/') >= 0)
 			throw new IllegalStateException("Saw internal name format, expected source name format");
+
+		// Strip array dimensions
+		if (name.endsWith("[]"))
+			name = name.substring(0, name.indexOf('['));
 
 		// Allow primitives
 		if (software.coley.recaf.util.Types.isPrimitiveClassName(name))

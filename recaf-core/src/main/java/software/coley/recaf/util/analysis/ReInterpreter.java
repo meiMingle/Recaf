@@ -495,6 +495,7 @@ public class ReInterpreter extends Interpreter<ReValue> implements Opcodes {
 	public ReValue ternaryOperation(@Nonnull AbstractInsnNode insn, @Nonnull ReValue value1, @Nonnull ReValue value2, ReValue value3) {
 		// We don't track array operations, but this would cover:
 		//  IASTORE, LASTORE, FASTORE, DASTORE, AASTORE, BASTORE, CASTORE, SASTORE
+		// Load operations are handled in 'binaryOperation'
 		return null;
 	}
 
@@ -509,12 +510,17 @@ public class ReInterpreter extends Interpreter<ReValue> implements Opcodes {
 			return newValue(returnType);
 		} else {
 			MethodInsnNode method = (MethodInsnNode) insn;
-			if (opcode == INVOKESTATIC && invokeStaticLookup != null && values.stream().allMatch(ReValue::hasKnownValue)) {
-				return invokeStaticLookup.get(method, values);
-			} else if (opcode == INVOKEVIRTUAL && invokeVirtualLookup != null && values.stream().allMatch(ReValue::hasKnownValue)) {
-				return invokeVirtualLookup.get(method, values.getFirst(), values.subList(1, values.size()));
+			Type returnType = Type.getReturnType(method.desc);
+			if (returnType.getSort() != Type.VOID) {
+				// We only support "lookups" as values are immutable.
+				// Something like System.arraycopy(...) isn't supported here.
+				if (opcode == INVOKESTATIC && invokeStaticLookup != null && values.stream().allMatch(ReValue::hasKnownValue)) {
+					return invokeStaticLookup.get(method, values);
+				} else if ((opcode == INVOKEVIRTUAL || opcode == INVOKEINTERFACE || opcode == INVOKESPECIAL)
+						&& invokeVirtualLookup != null && values.stream().allMatch(ReValue::hasKnownValue)) {
+					return invokeVirtualLookup.get(method, values.getFirst(), values.subList(1, values.size()));
+				}
 			}
-			Type returnType = Type.getReturnType(((MethodInsnNode) insn).desc);
 			return newValue(returnType);
 		}
 	}

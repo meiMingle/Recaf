@@ -51,6 +51,7 @@ menu.edit.noop=Make no-op
 menu.edit.changeversion=Change class versions
 menu.edit.changeversion.up=Upgrade
 menu.edit.changeversion.down=Downgrade
+menu.edit.newclass=New class
 menu.export.class=Export class
 menu.export.file=Export file
 menu.export.classes=Export classes
@@ -79,6 +80,7 @@ menu.search.field-references=Field references
 menu.search.noresults=No results
 menu.mappings=Mappings
 menu.mappings.apply=Apply
+menu.mappings.apply-advanced=Advanced apply
 menu.mappings.export=Export
 menu.mappings.export.unsupported=%s (Unsupported)
 menu.mappings.generate=Generate
@@ -191,6 +193,11 @@ dialog.option.update-workspace=Add to workspace
 ## Select class/file
 dialog.title.select-class=Select class
 dialog.title.select-file=Select file
+
+## Create class/file
+dialog.title.create-class=Create class
+dialog.header.create-class-error=The class name already exists.\nPlease choose a different name.
+
 
 ## Copy class/file
 dialog.title.copy-class=Copy class
@@ -467,6 +474,12 @@ deobf.tree.generic.optimize=Optimization
 deobf.tree.generic.restoration=Restoration
 deobf.tree.specific=Specific
 deobf.apply=Transform workspace
+
+## Mapping application
+mapapply=Apply mappings
+mapapply.pick.file=Choose mappings file
+mapapply.pick.dir=Choose mappings directory
+mapapply.settings.unique=Assume unique keys, ignore inheritance
 
 ## Mapping generator
 mapgen=Mapping generator
@@ -1005,6 +1018,7 @@ service.io.resource-importer-config.zip-strategy=ZIP parsing strategy
 service.io.resource-importer-config.allow-basic-base-offset-zero-check=Default to check 0 as zip beginning with JVM strategy
 service.io.resource-importer-config.skip-revisited-cen-to-local-links=Skip duplicate CEN-to-LOC entries with JVM strategy
 service.io.resource-importer-config.ignore-naive-file-lengths=Ignore reported file lengths with Naive strategy
+service.io.resource-importer-config.max-embedded-zip-depth=Max embedded zip traversal depth
 service.mapping=Mapping
 service.mapping.mapping-aggregator-config=Mapping aggregation
 service.mapping.mapping-formats-config=Mapping formats
