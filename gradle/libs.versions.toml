@@ -27,7 +27,7 @@ jlinker = "1.0.7"
 jphantom = "1.4.5"
 junit = "5.11.4"
 jsvg = "1.6.1"
-lljzip = "2.7.2"
+lljzip = "2.8.1"
 logback-classic = { strictly = "1.4.11" } # newer releases break in jar releases
 mapping-io = "0.7.0"
 mockito = "5.15.2"
@@ -36,7 +36,8 @@ picocli = "4.7.6"
 procyon = "0.6.0"
 reactfx = { strictly = "2.0-M5" } # won't get updates, dead
 regex = "0.1.16"
-richtextfx = "0.11.3"
+# richtextfx = "0.11.3"
+richtextfx = "970ff0ed13"
 treemapfx = "1.1.0"
 vineflower = "1.11.1"
 #fernflower = "242.23726.103"
@@ -141,7 +142,8 @@ reactfx = { module = "org.reactfx:reactfx", version.ref = "reactfx" }
 
 regex = { module = "com.github.tommyettinger:regexodus", version.ref = "regex" }
 
-richtextfx = { module = "org.fxmisc.richtext:richtextfx", version.ref = "richtextfx" }
+# richtextfx = { module = "org.fxmisc.richtext:richtextfx", version.ref = "richtextfx" }
+richtextfx = { module = "com.github.Col-E:RichTextFX", version.ref = "richtextfx" }
 
 treemapfx = { module = "software.coley:treemap-fx", version.ref = "treemapfx" }
 
