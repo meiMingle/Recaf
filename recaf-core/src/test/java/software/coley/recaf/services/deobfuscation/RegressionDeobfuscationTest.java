@@ -462,7 +462,7 @@ public class RegressionDeobfuscationTest extends BaseDeobfuscationTest {
 				    }
 				}
 				""";
-		validateAfterAssembly(asm, List.of(VariableFoldingTransformer.class) , dis -> {
+		validateAfterAssembly(asm, List.of(VariableFoldingTransformer.class), dis -> {
 			assertFalse(dis.contains("xyz"), "Should have folded all variable stores/reads");
 		});
 	}

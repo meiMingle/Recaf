@@ -27,6 +27,7 @@ import software.coley.recaf.util.visitors.IllegalAnnotationRemovingVisitor;
 import software.coley.recaf.util.visitors.IllegalSignatureRemovingVisitor;
 import software.coley.recaf.util.visitors.LongAnnotationRemovingVisitor;
 import software.coley.recaf.util.visitors.LongExceptionRemovingVisitor;
+import software.coley.recaf.util.visitors.SyntheticRemovingVisitor;
 import software.coley.recaf.workspace.model.Workspace;
 
 import java.util.Collection;
@@ -379,6 +380,10 @@ public class DecompilerManager implements Service {
 			if (config.getFilterSignatures().getValue()) {
 				if (cv == null) cv = cw.get();
 				cv = new IllegalSignatureRemovingVisitor(cv);
+			}
+			if (config.getFilterSynthetics().getValue()) {
+				if (cv == null) cv = cw.get();
+				cv = new SyntheticRemovingVisitor(cv);
 			}
 			if (config.getFilterDebug().getValue() && cv == null)
 				cv = cw.get();

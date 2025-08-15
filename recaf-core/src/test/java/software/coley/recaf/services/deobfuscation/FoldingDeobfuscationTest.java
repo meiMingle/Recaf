@@ -11,6 +11,7 @@ import software.coley.recaf.util.StringUtil;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 	@Test
@@ -758,6 +759,62 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 	}
 
 	@Test
+	void opaqueConstantFoldingLongShift() {
+		// We had a bug where shift instructions were not reporting the right stack consumption amount
+		// but this has since been fixed. So these should cleanly be folded now.
+		String asm = """
+				.method public static example ()J {
+				    code: {
+				    A:
+				        ldc 1000000L
+				        iconst_5
+				        lushr
+				        lreturn
+				    H:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(OpaqueConstantFoldingTransformer.class), dis -> {
+			// Expected folded value
+			assertTrue(dis.contains("31250L"));
+		});
+
+		asm = """
+				.method public static example ()J {
+				    code: {
+				    A:
+				        ldc 1000000L
+				        iconst_5
+				        lshr
+				        lreturn
+				    H:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(OpaqueConstantFoldingTransformer.class), dis -> {
+			// Expected folded value
+			assertTrue(dis.contains("31250L"));
+		});
+
+		asm = """
+				.method public static example ()J {
+				    code: {
+				    A:
+				        ldc 1000000L
+				        iconst_5
+				        lshl
+				        lreturn
+				    H:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(OpaqueConstantFoldingTransformer.class), dis -> {
+			// Expected folded value
+			assertTrue(dis.contains("32000000L"));
+		});
+	}
+
+	@Test
 	void foldDoubleDup2X1() {
 		String asm = """
 				.method public static example (I)I {
@@ -1341,6 +1398,98 @@ public class FoldingDeobfuscationTest extends BaseDeobfuscationTest {
 			assertEquals(0, StringUtil.count("ldc", dis), "Expected to fold original string");
 			assertEquals(0, StringUtil.count("invoke", dis), "Expected to fold method call");
 		});
+	}
+
+	@Test
+	void foldCharArrayIntoStringFromValueOf() {
+		String asm = """
+				.method public static example ()Ljava/lang/String; {
+				    code: {
+				    A:
+				        iconst_2
+				        newarray char
+				        dup
+				        iconst_0
+				        ldc 'H'
+				        castore
+				        dup
+				        iconst_1
+				        ldc 'i'
+				        castore
+				        invokestatic java/lang/String.valueOf ([C)Ljava/lang/String;
+				        areturn
+				    B:
+				    }
+				}
+				""";
+		validateBeforeAfterDecompile(asm, List.of(OpaqueConstantFoldingTransformer.class),
+				"return String.valueOf(new char[]{'H', 'i'});", "return \"Hi\";");
+	}
+
+	@Test
+	void foldStringToCharArrayFetch() {
+		String asm = """
+				.method public static example ()C {
+				    code: {
+				    A:
+				        ldc "abc"
+				        invokevirtual java/lang/String.toCharArray ()[C
+				        iconst_0
+				        caload
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateBeforeAfterDecompile(asm, List.of(OpaqueConstantFoldingTransformer.class),
+				"return \"abc\".toCharArray()[0]", "return 'a';");
+	}
+
+	@Test
+	void simulatingThrowingMethodDoesNotFold() {
+		String asm = """
+				.method public static example ()[C {
+				    code: {
+				    A:
+				        ldc "abc"
+				        invokevirtual java/lang/String.toCharArray ()[C
+				        iconst_m1
+				        iconst_m1
+				        invokestatic java/util/Arrays.copyOfRange ([CII)[C
+				        areturn
+				    B:
+				    }
+				}
+				""";
+		validateNoTransformation(asm, List.of(OpaqueConstantFoldingTransformer.class));
+	}
+
+	@Test
+	void foldFormattedString() {
+		// Has Object[] parameter with values that we want to fold
+		String asm = """
+				.method public static example ()Ljava/lang/String; {
+				    code: {
+				    A:
+				        ldc "Hello %s - Number %d"
+				        iconst_2
+				        anewarray java/lang/Object
+				        dup
+				        iconst_0
+				        ldc "Name"
+				        aastore
+				        dup
+				        iconst_1
+				        bipush 32
+				        invokestatic java/lang/Integer.valueOf (I)Ljava/lang/Integer;
+				        aastore
+				        invokevirtual java/lang/String.formatted ([Ljava/lang/Object;)Ljava/lang/String;
+				        areturn
+				    B:
+				    }
+				}
+				""";
+		validateBeforeAfterDecompile(asm, List.of(OpaqueConstantFoldingTransformer.class), "", "");
 	}
 
 	@Test
