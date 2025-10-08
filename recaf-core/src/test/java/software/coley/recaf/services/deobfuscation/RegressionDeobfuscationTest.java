@@ -1,12 +1,14 @@
 package software.coley.recaf.services.deobfuscation;
 
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.tree.AbstractInsnNode;
 import software.coley.recaf.services.deobfuscation.transform.generic.DeadCodeRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.GotoInliningTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.OpaqueConstantFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.OpaquePredicateFoldingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.RedundantTryCatchRemovingTransformer;
 import software.coley.recaf.services.deobfuscation.transform.generic.VariableFoldingTransformer;
+import software.coley.recaf.util.AsmInsnUtil;
 import software.coley.recaf.util.StringUtil;
 import software.coley.recaf.util.analysis.ReInterpreter;
 import software.coley.recaf.util.analysis.value.ReValue;
@@ -705,5 +707,91 @@ public class RegressionDeobfuscationTest extends BaseDeobfuscationTest {
 				}
 				""";
 		validateNoTransformation(asm, List.of(OpaqueConstantFoldingTransformer.class));
+	}
+
+	/**
+	 * This got addressed by not using {@link AsmInsnUtil#getSizeConsumed(AbstractInsnNode)} and
+	 * {@link AsmInsnUtil#getSizeProduced(AbstractInsnNode)} by default for computing foldable sequences
+	 * in {@link OpaqueConstantFoldingTransformer}. Instead, we do a simple 'this' and 'next' stack size
+	 * diff via {@link org.objectweb.asm.tree.analysis.Frame#getStackSize()}.
+	 */
+	@Test
+	void i2lConfusesConstantFoldingStackBalanceAndSkipsFoldableSequence() {
+		String asm = """
+				.method public static example ()I {
+				    code: {
+				    A:
+				        invokestatic Example.foo ()V
+				        iconst_0
+				        // Begin foldable
+				        ldc -114812231
+				        i2l
+				        ldc -8456834448885618340L
+				        lxor
+				        // End foldable
+				        invokestatic Example.bar (IJ)I
+				        ireturn
+				    B:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(OpaqueConstantFoldingTransformer.class), dis -> {
+			assertFalse(dis.contains("ldc -114812231"), "Failed to fold sequence");
+			assertFalse(dis.contains("i2l"), "Failed to fold sequence");
+			assertFalse(dis.contains("ldc -8456834448885618340L"), "Failed to fold sequence");
+			assertFalse(dis.contains("lxor"), "Failed to fold sequence");
+			assertTrue(dis.contains("ldc 8456834448930567141L"), "Failed to fold sequence into expected value");
+		});
+	}
+
+	/**
+	 * This example shows how <i>"Get the value from the next frame"</i> can fail.
+	 * This was fixed by using a fallback computation when the next frame's value is unknown for a given
+	 * sequence of foldable instructions.
+	 */
+	@Test
+	void backwardsJumpConfusesConstantFoldingKnownStackReplacement() {
+		String asm = """
+				.method public static example ()V {
+				    code: {
+				    A:
+				        bipush 50
+				        goto C
+				    B:
+				        // Begin foldable --> 30
+				        bipush 15
+				        bipush 15
+				        iadd
+				        // End foldable
+				    C:
+				        // Stack top is either 50 or 30 depending on where we came from
+				        //
+				        // Begin foldable --> 10
+				        iconst_5
+				        iconst_5
+				        iadd
+				        iadd
+				        // End foldable
+				        //
+				        // This backwards jump to C creates a scenario where we revisit C.
+				        // - A will jump to C with 50 on the stack.
+				        // - B will naturally flow into C with 30 on the stack.
+				        // - This jumps back to B so the control flow over C has two possible stack top values
+				        lookupswitch {
+						    55: B,
+						    default: D
+						}
+					D:
+				        return
+				    E:
+				    }
+				}
+				""";
+		validateAfterAssembly(asm, List.of(OpaqueConstantFoldingTransformer.class), dis -> {
+			assertFalse(dis.contains("iconst_5"), "Failed to fold sequence"); // The easy case
+			assertFalse(dis.contains("bipush 15"), "Failed to fold sequence"); // The edge case
+			assertTrue(dis.contains("bipush 10"), "Failed to fold easy-case sequence into expected value");
+			assertTrue(dis.contains("bipush 30"), "Failed to fold edge-case sequence into expected value");
+		});
 	}
 }

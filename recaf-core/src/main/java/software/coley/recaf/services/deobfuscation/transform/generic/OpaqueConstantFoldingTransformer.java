@@ -8,6 +8,7 @@ import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -22,6 +23,9 @@ import software.coley.recaf.services.transform.JvmTransformerContext;
 import software.coley.recaf.services.transform.TransformationException;
 import software.coley.recaf.util.AsmInsnUtil;
 import software.coley.recaf.util.BlwUtil;
+import software.coley.recaf.util.analysis.ReEvaluationException;
+import software.coley.recaf.util.analysis.ReEvaluator;
+import software.coley.recaf.util.analysis.ReFrame;
 import software.coley.recaf.util.analysis.value.DoubleValue;
 import software.coley.recaf.util.analysis.value.FloatValue;
 import software.coley.recaf.util.analysis.value.IntValue;
@@ -36,6 +40,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -365,9 +370,7 @@ public class OpaqueConstantFoldingTransformer implements JvmClassTransformer {
 				}
 
 				// Update the net stack size change.
-				int consumed = AsmInsnUtil.getSizeConsumed(insn);
-				int produced = AsmInsnUtil.getSizeProduced(insn);
-				int stackDiff = produced - consumed;
+				int stackDiff = computeInstructionStackDifference(frames, j, insn);
 				netStackChange += stackDiff;
 
 				// Step backwards.
@@ -398,11 +401,19 @@ public class OpaqueConstantFoldingTransformer implements JvmClassTransformer {
 			ReValue topValue = isReturn ?
 					frame.getStack(frame.getStackSize() - 1) :
 					nextFrame.getStack(nextFrame.getStackSize() - 1);
+
+			// In some cases where the next instruction is a label targeted by backwards jumps from dummy/dead code
+			// the analyzer can get fooled into merging an unknown state into something that should be known.
+			// When this happens we can evaluate our sequence and see what the result should be.
+			if (!isReturn && !topValue.hasKnownValue()) {
+				topValue = evaluateTopFromSequence(context, method, sequence, topValue, frames, j);
+			}
+
 			AbstractInsnNode replacement = toInsn(topValue);
 			if (replacement == null) {
 				// Skip if this isn't an operation we can support
-				 if (frame.getStackSize() < 2)
-				 	continue;
+				if (frame.getStackSize() < 2)
+					continue;
 
 				// We don't know the result of the operation. But if it is something we know is redundant
 				// we will want to remove it anyways. For instance:
@@ -476,6 +487,86 @@ public class OpaqueConstantFoldingTransformer implements JvmClassTransformer {
 			dirty = true;
 		}
 		return dirty;
+	}
+
+	/**
+	 * Attempts to evaluate the given sequence of instructions to find the resulting value.
+	 *
+	 * @param context
+	 * 		Transformer context.
+	 * @param method
+	 * 		Method hosting the sequence of instructions.
+	 * @param sequence
+	 * 		Sequence of instructions to evaluate.
+	 * @param topValue
+	 * 		The existing top value that has an unknown value.
+	 * @param frames
+	 * 		The method stack frames.
+	 * @param sequenceStartIndex
+	 * 		The stack frame index where the sequence begins at.
+	 *
+	 * @return Top stack value after executing the given sequence of instructions.
+	 */
+	@Nonnull
+	private ReValue evaluateTopFromSequence(@Nonnull JvmTransformerContext context,
+	                                        @Nonnull MethodNode method,
+	                                        @Nonnull List<AbstractInsnNode> sequence,
+	                                        @Nonnull ReValue topValue,
+	                                        @Nonnull Frame<ReValue>[] frames,
+	                                        int sequenceStartIndex) {
+		// Need to wrap a copy of the instructions in its own InsnList
+		// so that instructions have 'getNext()' and 'getPrevious()' set properly.
+		Map<LabelNode, LabelNode> clonedLabels = Collections.emptyMap();
+		InsnList block = new InsnList();
+		for (AbstractInsnNode insn : sequence)
+			block.add(insn.clone(clonedLabels));
+
+		// Setup evaluator. We generally only support linear folding, so having the execution step limit
+		// match the sequence length with a little leeway should be alright.
+		final int maxSteps = sequence.size() + 10;
+		ReFrame initialBlockFrame = (ReFrame) frames[Math.max(0, sequenceStartIndex)];
+		ReEvaluator evaluator = new ReEvaluator(context.getWorkspace(), context.newInterpreter(inheritanceGraph), maxSteps);
+
+		// Evaluate the sequence and return the result.
+		try {
+			ReValue result = evaluator.evaluateBlock(block, initialBlockFrame, method.access);
+			if (Objects.equals(result.type(), topValue.type())) // Sanity check
+				return result;
+		} catch (ReEvaluationException ignored) {}
+
+		// Evaluation failed, this is to be expected as some cases cannot always be evaluated.
+		return topValue;
+	}
+
+	/**
+	 * @param frames
+	 * 		Method stack frames.
+	 * @param i
+	 * 		Index in the stack frames of the given instruction.
+	 * @param insn
+	 * 		The instruction to evaluate for stack size differences after execution.
+	 *
+	 * @return Stack size difference after execution.
+	 */
+	private static int computeInstructionStackDifference(@Nonnull Frame<ReValue>[] frames, int i, @Nonnull AbstractInsnNode insn) {
+		// Ideally we just check the size difference between this frame and the next frame.
+		// Not all frames exist in the array, as dead code gets skipped by ASM's analyzer.
+		Frame<ReValue> thisFrame = frames[i];
+		Frame<ReValue> nextFrame = frames[i + 1];
+		if (thisFrame != null && nextFrame != null) {
+			int jsize = thisFrame.getStackSize();
+			int jsizeNext = nextFrame.getStackSize();
+			return jsizeNext - jsize;
+		}
+
+		// This is our fallback. These utility methods are not ideal because they follow the JVM spec.
+		// I know, that sounds ridiculous. But ASM's analyzer treats long/double as a single slot.
+		// These size methods will treat long/double as two slots. The discrepancy can lead to us not
+		// properly evaluating sequence lengths. This generally shouldn't ever be an issue unless we're
+		// looking at dead code regions (which make the frame null checks above fail).
+		int consumed = AsmInsnUtil.getSizeConsumed(insn);
+		int produced = AsmInsnUtil.getSizeProduced(insn);
+		return produced - consumed;
 	}
 
 	/**
