@@ -20,8 +20,8 @@ subprojects {
         mavenCentral()
         google()
         maven { url = 'https://jitpack.io' }
-        // maven { url 'https://www.jetbrains.com/intellij-repository/releases' }
-        maven { url = 'https://www.jetbrains.com/intellij-repository/snapshots' }
+        maven { url = 'https://www.jetbrains.com/intellij-repository/releases' }
+        // maven { url = 'https://www.jetbrains.com/intellij-repository/snapshots' }
         // maven { url 'https://maven.minecraftforge.net' }
     }
 
