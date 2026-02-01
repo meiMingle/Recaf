@@ -21,6 +21,7 @@ import software.coley.recaf.services.navigation.Actions;
 import software.coley.recaf.services.search.match.StringPredicateProvider;
 import software.coley.recaf.ui.contextmenu.ContextMenuBuilder;
 import software.coley.recaf.ui.pane.search.MemberReferenceSearchPane;
+import software.coley.recaf.ui.pane.search.SearchContextSource;
 import software.coley.recaf.util.ClipboardUtil;
 import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.bundle.ClassBundle;
@@ -72,6 +73,11 @@ public class BasicMethodContextMenuProviderFactory extends AbstractContextMenuPr
 						logger.error("Cannot go to method due to incomplete path", ex);
 					}
 				});
+
+				// Convenience for search results
+				if (source instanceof SearchContextSource) {
+					builder.item("menu.edit.assemble.method", EDIT, Unchecked.runnable(() -> actions.openAssembler(PathNodes.memberPath(workspace, resource, bundle, declaringClass, method))));
+				}
 			} else {
 				// Edit menu
 				var edit = builder.submenu("menu.edit", EDIT);
@@ -81,6 +87,7 @@ public class BasicMethodContextMenuProviderFactory extends AbstractContextMenuPr
 					JvmClassInfo declaringJvmClass = declaringClass.asJvmClass();
 
 					edit.item("menu.edit.copy", COPY_FILE, () -> actions.copyMember(workspace, resource, jvmBundle, declaringJvmClass, method));
+					edit.item("menu.edit.removevars", CIRCLE_DASH, () -> actions.removeMethodVariables(workspace, resource, jvmBundle, declaringJvmClass, List.of(method)));
 					if (!method.getName().equals("<init>")) // The conditions for optimally no-op'ing a constructor are a bit tricky, we'll just skip those for now.
 						edit.item("menu.edit.noop", CIRCLE_DASH, () -> actions.makeMethodsNoop(workspace, resource, jvmBundle, declaringJvmClass, List.of(method)));
 					edit.item("menu.edit.delete", TRASH_CAN, () -> actions.deleteClassMethods(workspace, resource, jvmBundle, declaringJvmClass, List.of(method)));

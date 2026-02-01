@@ -7,6 +7,8 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.analysis.Frame;
+import org.slf4j.Logger;
+import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.info.JvmClassInfo;
 import software.coley.recaf.path.ClassPathNode;
 import software.coley.recaf.path.PathNodes;
@@ -34,7 +36,6 @@ import software.coley.recaf.workspace.model.resource.WorkspaceResource;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -47,18 +48,20 @@ import java.util.function.Supplier;
  * @author Matt Coley
  */
 public class JvmTransformerContext {
+	private static final Logger logger = Logging.get(JvmTransformerContext.class);
 	private final Map<Class<? extends JvmClassTransformer>, JvmClassTransformer> transformerMap;
 	private final AggregatedMappings mappings;
-	private final Set<String> classesToRemove = new HashSet<>();
+	private final Set<String> classesToRemove = ConcurrentHashMap.newKeySet();
 	private final Map<String, JvmClassData> classData = new ConcurrentHashMap<>();
-	private final Set<String> recomputeFrameClasses = new HashSet<>();
+	private final Set<String> recomputeFrameClasses = ConcurrentHashMap.newKeySet();
+	private final ThreadLocal<Boolean> transformerDidWork = ThreadLocal.withInitial(() -> false);
 	private final Workspace workspace;
 	private final WorkspaceResource resource;
 	private Supplier<GetFieldLookup> getFieldLookupSupplier = () -> null;
 	private Supplier<GetStaticLookup> getStaticLookupSupplier = BasicGetStaticLookup::new;
 	private Supplier<InvokeVirtualLookup> invokeVirtualLookupSupplier = BasicInvokeVirtualLookup::new;
 	private Supplier<InvokeStaticLookup> invokeStaticLookupSupplier = BasicInvokeStaticLookup::new;
-	private boolean transformerDidWork;
+	private boolean dropFaultyClasses; // For debugging, not exposed publicly.
 
 	/**
 	 * Constructs a new context from an array of transformers.
@@ -116,8 +119,8 @@ public class JvmTransformerContext {
 				if (data.node != null) {
 					// Emit bytecode from the current node
 					boolean recompute = recomputeFrameClasses.contains(data.node.name);
-					int flags = recompute ? ClassWriter.COMPUTE_FRAMES : 0;
-					ClassReader reader = data.initialClass.getClassReader();
+					int flags = recompute && !dropFaultyClasses ? ClassWriter.COMPUTE_FRAMES : 0;
+					ClassReader reader = data.initialClass.getClassReader(); // Copy const-pool + bootstrap methods
 					ClassWriter writer = new WorkspaceClassWriter(inheritanceGraph, reader, flags);
 					try {
 						if (recompute)
@@ -135,6 +138,10 @@ public class JvmTransformerContext {
 								.child(modifiedClass);
 						map.put(classPath, modifiedClass);
 					} catch (Throwable t) {
+						if (dropFaultyClasses) {
+							logger.warn("Error writing class '{}', skipping", data.initialClass.getName(), t);
+							continue;
+						}
 						throw new TransformationException("ClassNode --> byte[] failed for class '" + data.node.name + "'", t);
 					}
 				} else {
@@ -302,7 +309,7 @@ public class JvmTransformerContext {
 	 * @see #getNode(JvmClassBundle, JvmClassInfo)
 	 */
 	public void setNode(@Nonnull JvmClassBundle bundle, @Nonnull JvmClassInfo info, @Nonnull ClassNode node) {
-		transformerDidWork = true;
+		transformerDidWork.set(true);
 		getJvmClassData(bundle, info).setNode(node);
 	}
 
@@ -320,7 +327,7 @@ public class JvmTransformerContext {
 	 * @see #getBytecode(JvmClassBundle, JvmClassInfo)
 	 */
 	public void setBytecode(@Nonnull JvmClassBundle bundle, @Nonnull JvmClassInfo info, @Nonnull byte[] bytecode) {
-		transformerDidWork = true;
+		transformerDidWork.set(true);
 		getJvmClassData(bundle, info).setBytecode(bytecode);
 	}
 
@@ -496,7 +503,7 @@ public class JvmTransformerContext {
 	 */
 	protected void resetTransformerTracking() {
 		// Any transformation application should call this before the transformer methods operate on data.
-		transformerDidWork = false;
+		transformerDidWork.set(false);
 	}
 
 	/**
@@ -506,7 +513,7 @@ public class JvmTransformerContext {
 	 * @return {@code true} if the last transformer ran did work with this context.
 	 */
 	protected boolean didTransformerDoWork() {
-		return transformerDidWork;
+		return transformerDidWork.get();
 	}
 
 	@Nonnull

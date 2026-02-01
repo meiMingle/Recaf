@@ -4,10 +4,21 @@ import jakarta.annotation.Nonnull;
 import org.slf4j.Logger;
 import software.coley.collections.Unchecked;
 import software.coley.recaf.analytics.logging.Logging;
+import software.coley.recaf.behavior.PrioritySortable;
 import software.coley.recaf.info.Info;
 import software.coley.recaf.workspace.model.resource.BasicWorkspaceResource;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.NavigableSet;
+import java.util.Set;
+import java.util.Stack;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -26,6 +37,7 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 	private final Map<String, I> backing = new ConcurrentHashMap<>();
 	private final Set<String> initialKeys = ConcurrentHashMap.newKeySet();
 	private final NavigableSet<String> removed = Collections.synchronizedNavigableSet(new TreeSet<>());
+	private int hash;
 
 	/**
 	 * Create initial history item.
@@ -96,9 +108,8 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 	public Set<String> getDirtyKeys() {
 		Set<String> dirty = new TreeSet<>();
 		history.forEach((key, itemHistory) -> {
-			if (itemHistory.size() > 1) {
+			if (itemHistory.size() > 1)
 				dirty.add(key);
-			}
 		});
 		return dirty;
 	}
@@ -120,11 +131,12 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 	public void incrementHistory(@Nonnull I info) {
 		String key = info.getName();
 		Stack<I> itemHistory = getHistory(key);
-		if (itemHistory == null) {
+		if (itemHistory == null)
 			throw new IllegalStateException("Failed history increment, no prior history to build on for: " + key);
-		}
-		// logger.debug("Increment history: {} - {} states", EscapeUtil.escapeCommon(key), itemHistory.size());
 		itemHistory.push(info);
+
+		// Clear cached hash
+		resetHash();
 	}
 
 	@Override
@@ -146,6 +158,9 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 		}
 		backing.put(key, priorItem);
 
+		// Clear cached hash
+		resetHash();
+
 		// Notify listeners
 		Unchecked.checkedForEach(listeners, listener -> listener.onUpdateItem(key, currentItem, priorItem),
 				(listener, t) -> logger.error("Exception thrown when decrementing bundle history", t));
@@ -153,7 +168,7 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 
 	@Override
 	public void addBundleListener(@Nonnull BundleListener<I> listener) {
-		listeners.add(listener);
+		PrioritySortable.add(listeners, listener);
 	}
 
 	@Override
@@ -198,6 +213,15 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 		// Ensure we don't track entries by this name as 'removed'
 		removed.remove(key);
 
+		// Update history
+		if (oldValue == null)
+			initHistory(newValue);
+		else
+			incrementHistory(newValue);
+
+		// Clear cached hash
+		resetHash();
+
 		// Notify listeners
 		Unchecked.checkedForEach(listeners, listener -> {
 			if (oldValue == null) {
@@ -206,13 +230,6 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 				listener.onUpdateItem(key, oldValue, newValue);
 			}
 		}, (listener, t) -> logger.error("Exception thrown when putting bundle item", t));
-
-		// Update history
-		if (oldValue == null) {
-			initHistory(newValue);
-		} else {
-			incrementHistory(newValue);
-		}
 		return oldValue;
 	}
 
@@ -227,12 +244,15 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 			if (initialKeys.contains(keyStr))
 				removed.add(keyStr);
 
+			// Update history
+			history.remove(key);
+
+			// Clear cached hash
+			resetHash();
+
 			// Notify listeners
 			Unchecked.checkedForEach(listeners, listener -> listener.onRemoveItem(keyStr, info),
 					(listener, t) -> logger.error("Exception thrown when removing bundle item", t));
-
-			// Update history
-			history.remove(key);
 		}
 		return info;
 	}
@@ -244,9 +264,18 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 
 	@Override
 	public void clear() {
+		Map<String, I> copy = new HashMap<>(backing);
+
 		removed.addAll(initialKeys);
 		backing.clear();
 		history.clear();
+		resetHash();
+
+		// Notify listeners
+		copy.forEach((keyStr, info) -> {
+			Unchecked.checkedForEach(listeners, listener -> listener.onRemoveItem(keyStr, info),
+					(listener, t) -> logger.error("Exception thrown when removing bundle item", t));
+		});
 	}
 
 	@Override
@@ -270,21 +299,32 @@ public class BasicBundle<I extends Info> implements Bundle<I> {
 		clear();
 	}
 
+	private void resetHash() {
+		hash = 0;
+	}
+
 	@Override
 	public boolean equals(Object o) {
-		if (this == o) return true;
-		if (o == null || getClass() != o.getClass()) return false;
+		if (this == o)
+			return true;
+		if (o == null || getClass() != o.getClass())
+			return false;
 
 		BasicBundle<?> other = (BasicBundle<?>) o;
 
-		if (!history.equals(other.history)) return false;
+		if (!history.equals(other.history))
+			return false;
 		return backing.equals(other.backing);
 	}
 
 	@Override
 	public int hashCode() {
-		int result = history.hashCode();
-		result = 31 * result + backing.hashCode();
+		int result = hash;
+		if (result == 0) {
+			result = history.hashCode();
+			result = 31 * result + backing.hashCode();
+			hash = result;
+		}
 		return result;
 	}
 }

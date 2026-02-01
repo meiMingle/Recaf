@@ -6,7 +6,6 @@ import atlantafx.base.theme.Styles;
 import jakarta.annotation.Nonnull;
 import jakarta.enterprise.context.Dependent;
 import jakarta.inject.Inject;
-import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Group;
@@ -17,7 +16,6 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TitledPane;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
-import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import software.coley.recaf.path.PathNode;
@@ -28,8 +26,9 @@ import software.coley.recaf.services.cell.text.TextProviderService;
 import software.coley.recaf.services.info.summary.ResourceSummaryService;
 import software.coley.recaf.services.info.summary.SummaryConsumer;
 import software.coley.recaf.services.navigation.Navigable;
+import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.ui.control.BoundLabel;
-import software.coley.recaf.ui.docking.DockingLayoutManager;
+import software.coley.recaf.ui.docking.DockingManager;
 import software.coley.recaf.util.FxThreadUtil;
 import software.coley.recaf.util.Lang;
 import software.coley.recaf.workspace.model.Workspace;
@@ -46,7 +45,7 @@ import java.util.concurrent.CompletableFuture;
  * Pane to display summary data about the loaded {@link Workspace} when opened.
  *
  * @author Matt Coley
- * @see DockingLayoutManager
+ * @see DockingManager
  * @see ResourceSummaryService
  */
 @Dependent
@@ -57,7 +56,8 @@ public class WorkspaceInformationPane extends StackPane implements Navigable {
 	public WorkspaceInformationPane(@Nonnull TextProviderService textService,
 	                                @Nonnull IconProviderService iconService,
 	                                @Nonnull ResourceSummaryService summaryService,
-	                                @Nonnull Workspace workspace) {
+	                                @Nonnull WorkspaceManager workspaceManager) {
+		Workspace workspace = workspaceManager.getCurrent();
 		path = PathNodes.workspacePath(workspace);
 
 		// Adding content
@@ -70,7 +70,8 @@ public class WorkspaceInformationPane extends StackPane implements Navigable {
 		getStyleClass().add("background");
 
 		// Set up a "loading..." overlay while the summary is still being generated
-		VBox box = new VBox(new RingProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS),
+		RingProgressIndicator ring = new RingProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS);
+		VBox box = new VBox(ring,
 				new BoundLabel(Lang.getBinding("workspace.info-progress")));
 		box.setAlignment(Pos.CENTER);
 		box.setSpacing(20);
@@ -109,7 +110,16 @@ public class WorkspaceInformationPane extends StackPane implements Navigable {
 
 		// When the summary is done, clear the "loading..." overlay.
 		CompletableFuture.allOf(summaryFutures.toArray(CompletableFuture[]::new))
-				.whenCompleteAsync((ignored, error) -> FxThreadUtil.delayedRun(100, () -> modal.hide(true)));
+				.whenCompleteAsync((ignored, error) -> FxThreadUtil.delayedRun(100, () -> {
+					modal.hide(true);
+
+					// AtlantaFX's ring progress in the 'indeterminate' state uses the JavaFX 'RotateTransition' animation
+					// which leaks memory if not explicitly stopped. This results in any workspace content never being GC'd.
+					//
+ 					// See: https://bsky.app/profile/mattcoley.bsky.social/post/3mbvlnisiys2z
+					ring.setProgress(0);
+					box.getChildren().clear();
+				}));
 	}
 
 	@Nonnull

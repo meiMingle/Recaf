@@ -2,9 +2,9 @@ package software.coley.recaf.path;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
-import net.greypanther.natsort.CaseInsensitiveSimpleNaturalComparator;
 import software.coley.collections.Maps;
 import software.coley.collections.Unchecked;
+import software.coley.recaf.info.Named;
 import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.bundle.Bundle;
 import software.coley.recaf.workspace.model.resource.WorkspaceFileResource;
@@ -90,8 +90,27 @@ public class ResourcePathNode extends AbstractPathNode<Workspace, WorkspaceResou
 	 */
 	public boolean isPrimary() {
 		PathNode<Workspace> parent = getParent();
-		if (parent == null) return false;
+		if (parent == null)
+			return false;
 		return parent.getValue().getPrimaryResource() == getValue();
+	}
+
+	/**
+	 * @return {@code true} when this resource node, wraps the primary resource of a workspace or any resource embedded in the primary resource.
+	 */
+	public boolean isPrimaryOrEmbeddedInPrimary() {
+		PathNode<Workspace> parent = getParent();
+		if (parent == null)
+			return false;
+		Workspace workspace = parent.getValue();
+		WorkspaceResource primary = workspace.getPrimaryResource();
+		WorkspaceResource resource = getValue();
+		while (resource != null) {
+			if (primary == resource)
+				return true;
+			resource = resource.getContainingResource();
+		}
+		return false;
 	}
 
 	@Nonnull
@@ -115,7 +134,7 @@ public class ResourcePathNode extends AbstractPathNode<Workspace, WorkspaceResou
 				Map<WorkspaceFileResource, String> lookup = Maps.reverse(parentOfParent.getValue().getEmbeddedResources());
 				String ourKey = lookup.getOrDefault(resource, "?");
 				String otherKey = lookup.getOrDefault(otherResource, "?");
-				return CaseInsensitiveSimpleNaturalComparator.getInstance().compare(ourKey, otherKey);
+				return Named.STRING_PATH_COMPARATOR.compare(ourKey, otherKey);
 			} else {
 				if (workspace != null) {
 					if (resource == otherResource)
@@ -126,7 +145,7 @@ public class ResourcePathNode extends AbstractPathNode<Workspace, WorkspaceResou
 					return Integer.compare(resources.indexOf(resource), resources.indexOf(otherResource));
 				} else {
 					// Enforce some ordering. Not ideal but works.
-					return CaseInsensitiveSimpleNaturalComparator.getInstance().compare(
+					return Named.STRING_COMPARATOR.compare(
 							resource.getClass().getSimpleName(),
 							otherResource.getClass().getSimpleName()
 					);

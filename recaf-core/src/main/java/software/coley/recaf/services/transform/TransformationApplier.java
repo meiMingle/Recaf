@@ -1,7 +1,6 @@
 package software.coley.recaf.services.transform;
 
 import jakarta.annotation.Nonnull;
-import jakarta.annotation.Nullable;
 import software.coley.collections.Sets;
 import software.coley.recaf.analytics.logging.DebuggingLogger;
 import software.coley.recaf.analytics.logging.Logging;
@@ -14,6 +13,7 @@ import software.coley.recaf.services.inheritance.InheritanceGraph;
 import software.coley.recaf.services.mapping.IntermediateMappings;
 import software.coley.recaf.services.mapping.MappingApplier;
 import software.coley.recaf.services.mapping.MappingResults;
+import software.coley.recaf.util.threading.ThreadPoolFactory;
 import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.bundle.JvmClassBundle;
 import software.coley.recaf.workspace.model.resource.WorkspaceResource;
@@ -25,7 +25,10 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static software.coley.collections.Unchecked.cast;
@@ -40,6 +43,7 @@ import static software.coley.collections.Unchecked.checkedForEach;
 public class TransformationApplier {
 	private static final DebuggingLogger logger = Logging.get(TransformationApplier.class);
 	private final TransformationManager transformationManager;
+	private final TransformationApplierConfig transformApplyConfig;
 	private final InheritanceGraph inheritanceGraph;
 	private final MappingApplier mappingApplier;
 	private final Workspace workspace;
@@ -48,6 +52,8 @@ public class TransformationApplier {
 	/**
 	 * @param transformationManager
 	 * 		Manager to pull transformer instances from.
+	 * @param transformApplyConfig
+	 * 		Transformation applier config.
 	 * @param inheritanceGraph
 	 * 		Inheritance graph to use for frame computation <i>(Some transformers will trigger this)</i>.
 	 * @param mappingApplier
@@ -56,10 +62,12 @@ public class TransformationApplier {
 	 * 		Workspace with classes to transform.
 	 */
 	public TransformationApplier(@Nonnull TransformationManager transformationManager,
+	                             @Nonnull TransformationApplierConfig transformApplyConfig,
 	                             @Nonnull InheritanceGraph inheritanceGraph,
 	                             @Nonnull MappingApplier mappingApplier,
 	                             @Nonnull Workspace workspace) {
 		this.transformationManager = transformationManager;
+		this.transformApplyConfig = transformApplyConfig;
 		this.inheritanceGraph = inheritanceGraph;
 		this.mappingApplier = mappingApplier;
 		this.workspace = workspace;
@@ -92,15 +100,14 @@ public class TransformationApplier {
 	 */
 	@Nonnull
 	public JvmTransformResult transformJvm(@Nonnull List<Class<? extends JvmClassTransformer>> transformerClasses) throws TransformationException {
-		return transformJvm(transformerClasses, null);
+		return transformJvm(transformerClasses, TransformationFeedback.DEFAULT);
 	}
 
 	/**
 	 * @param transformerClasses
 	 * 		JVM class transformers to run.
-	 * @param predicate
-	 * 		Filter to control which JVM classes are transformed.
-	 * 		Can be {@code null} to transform all JVM classes.
+	 * @param feedback
+	 * 		Feedback to report transformation progress to, and control which JVM classes are transformed.
 	 *
 	 * @return Result container with details about the transformation, including any failures, the transformed classes,
 	 * and the option to apply the transformations to the workspace.
@@ -110,17 +117,17 @@ public class TransformationApplier {
 	 */
 	@Nonnull
 	public JvmTransformResult transformJvm(@Nonnull List<Class<? extends JvmClassTransformer>> transformerClasses,
-	                                       @Nullable JvmClassTransformerPredicate predicate) throws TransformationException {
-		// Build transformer visitation order
+	                                       @Nonnull TransformationFeedback feedback) throws TransformationException {
+		// Build transformer visitation order.
 		TransformerQueue queue = buildQueue(cast(transformerClasses));
 
-		// Map to hold transformation errors for each class:transformer
-		Map<ClassPathNode, Map<Class<? extends JvmClassTransformer>, Throwable>> transformJvmFailures = new IdentityHashMap<>();
+		// Map to hold transformation errors for each class:transformer.
+		Map<ClassPathNode, Map<Class<? extends JvmClassTransformer>, Throwable>> transformJvmFailures = Collections.synchronizedMap(new IdentityHashMap<>());
 
 		// Map to hold transformers to the paths of classes they have modified.
-		Map<Class<? extends JvmClassTransformer>, Collection<ClassPathNode>> transformerToModifiedClasses = new IdentityHashMap<>();
+		Map<Class<? extends JvmClassTransformer>, Collection<ClassPathNode>> transformerToModifiedClasses = Collections.synchronizedMap(new IdentityHashMap<>());
 
-		// Build the transformer context and apply all transformations in order
+		// Build the transformer context and apply all transformations in order.
 		List<JvmClassTransformer> transformers = queue.getTransformers();
 		WorkspaceResource resource = workspace.getPrimaryResource();
 		ResourcePathNode resourcePath = PathNodes.resourcePath(workspace, resource);
@@ -135,51 +142,101 @@ public class TransformationApplier {
 				throw new TransformationException(message, t);
 			}
 		}
-		resource.jvmClassBundleStreamRecursive().forEach(bundle -> {
-			BundlePathNode bundlePathNode = resourcePath.child(bundle);
-			for (int pass = 1; pass <= getMaxPasses(); pass++) {
-				AtomicBoolean anyWorkDone = new AtomicBoolean(false);
-				for (JvmClassTransformer transformer : transformers) {
-					final int currentPass = pass;
-					bundle.forEach(cls -> {
-						// Skip if the class does not pass the predicate
-						if (predicate != null && !predicate.shouldTransform(workspace, resource, bundle, cls))
-							return;
+		AtomicInteger finalPass = new AtomicInteger();
+		List<JvmClassTransformer> prunedTransformers = new ArrayList<>();
+		try (ExecutorService service = transformApplyConfig.doParallelize().getValue() ?
+				ThreadPoolFactory.newFixedThreadPool("transform-apply") :
+				ThreadPoolFactory.newSingleThreadExecutor("transform-apply")) {
+			resource.jvmAllClassBundleStreamRecursive().forEach(bundle -> {
+				List<Callable<Void>> tasks = new ArrayList<>(bundle.size());
+				BundlePathNode bundlePathNode = resourcePath.child(bundle);
+				for (int pass = 1; pass <= getMaxPasses(); pass++) {
+					finalPass.set(pass);
+					AtomicBoolean anyWorkDone = new AtomicBoolean(false);
+					for (JvmClassTransformer transformer : transformers) {
+						AtomicBoolean transformerWorkDone = new AtomicBoolean(false);
+						final int currentPass = pass;
 
-						try {
-							context.resetTransformerTracking();
-							transformer.transform(context, workspace, resource, bundle, cls);
-							if (context.didTransformerDoWork()) {
-								// Transformer modified this class, record the interaction
-								anyWorkDone.set(true);
-								Collection<ClassPathNode> paths = transformerToModifiedClasses.computeIfAbsent(transformer.getClass(),
-										t -> Collections.newSetFromMap(new IdentityHashMap<>()));
+						// Transformers can be run in parallel per each pass across all classes in the bundle.
+						tasks.clear();
+						for (JvmClassInfo cls : bundle)
+							tasks.add(() -> {
+								// Skip if transformation has been cancelled
+								if (feedback.hasRequestedCancellation())
+									return null;
 
-								// Only keep one path (since we may have repeated passes)
-								if (paths.stream().noneMatch(p -> p.getValue().getName().equals(cls.getName()))) {
+								// Skip if the class does not pass the predicate
+								if (!feedback.shouldTransform(workspace, resource, bundle, cls, transformer, currentPass))
+									return null;
+
+								try {
+									context.resetTransformerTracking();
+									transformer.transform(context, workspace, resource, bundle, cls);
+									boolean didWork = context.didTransformerDoWork();
+									if (didWork) {
+										// Transformer modified this class, record the interaction
+										anyWorkDone.set(true);
+										transformerWorkDone.set(true);
+										Collection<ClassPathNode> paths = transformerToModifiedClasses.computeIfAbsent(transformer.getClass(),
+												t -> Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>())));
+
+										// Only keep one path (since we may have repeated passes)
+										synchronized (paths) {
+											if (paths.stream().noneMatch(p -> p.getValue().getName().equals(cls.getName()))) {
+												ClassPathNode path = bundlePathNode.child(cls.getPackageName()).child(cls);
+												paths.add(path);
+											}
+										}
+										feedback.onTransformed(workspace, resource, bundle, cls, transformer, currentPass);
+									} else {
+										feedback.onTransformedWithoutWork(workspace, resource, bundle, cls, transformer, currentPass);
+									}
+									logger.debugging(l -> l.debug("Pass {}: Transformer {} didWork={}",
+											currentPass, transformer.getClass().getSimpleName(), didWork));
+
+								} catch (Throwable t) {
+									logger.error("Transformer '{}' failed on class '{}'", transformer.name(), cls.getName(), t);
+									feedback.onTransformFailure(workspace, resource, bundle, cls,  transformer,currentPass, t);
 									ClassPathNode path = bundlePathNode.child(cls.getPackageName()).child(cls);
-									paths.add(path);
+									var transformerToThrowable = transformJvmFailures.computeIfAbsent(path, p -> Collections.synchronizedMap(new IdentityHashMap<>()));
+									transformerToThrowable.put(transformer.getClass(), t);
 								}
-							}
-							logger.debugging(l -> l.debug("Pass {}: Transformer {} didWork={}",
-									currentPass, transformer.getClass().getSimpleName(), context.didTransformerDoWork()));
-						} catch (Throwable t) {
-							logger.error("Transformer '{}' failed on class '{}'", transformer.name(), cls.getName(), t);
-							ClassPathNode path = bundlePathNode.child(cls.getPackageName()).child(cls);
-							var transformerToThrowable = transformJvmFailures.computeIfAbsent(path, p -> new IdentityHashMap<>());
-							transformerToThrowable.put(transformer.getClass(), t);
-						}
-					});
-				}
+								return null;
+							});
 
-				// Break if no work has been done this pass.
-				if (!anyWorkDone.get())
-					break;
-			}
-		});
+						// Invoke and wait for all classes in this bundle to be visited/transformed.
+						try {
+							service.invokeAll(tasks);
+						} catch (InterruptedException ex) {
+							throw new RuntimeException("Interrupt", ex);
+						}
+
+						// If a transformer is prunable (they no longer execute after a full pass without any work completed)
+						// schedule it for removal so that it will not be executed in following passes.
+						if (!transformerWorkDone.get() && transformer.pruneAfterNoWork()) {
+							logger.debug("Pruning transformer '{}' after pass {} completed with no work done", transformer.name(), pass);
+							prunedTransformers.add(transformer);
+						}
+					}
+
+					// Remove pruned transformers.
+					transformers.removeAll(prunedTransformers);
+
+					// Break if this transformer has done no work has been done this pass.
+					if (!anyWorkDone.get())
+						break;
+				}
+			});
+			feedback.onCompletion();
+		} catch (RuntimeException ex) {
+			// Handle the interrupt runtime exception seen a few lines up.
+			throw new TransformationException("Unexpected runtime exception", ex);
+		}
 
 		// Update the workspace contents with the transformation results
 		Map<ClassPathNode, JvmClassInfo> transformedJvmClasses = context.buildChangeMap(inheritanceGraph);
+		logger.debug("Computed transformations with {} transformers, affecting {} classes after {} passes",
+				transformerClasses.size(), transformedJvmClasses.size(), finalPass.get());
 		return new JvmTransformResult() {
 			@Nonnull
 			@Override

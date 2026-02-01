@@ -103,6 +103,7 @@ import software.coley.recaf.util.visitors.MemberStubAddingVisitor;
 import software.coley.recaf.util.visitors.MethodAnnotationRemovingVisitor;
 import software.coley.recaf.util.visitors.MethodNoopingVisitor;
 import software.coley.recaf.util.visitors.MethodPredicate;
+import software.coley.recaf.util.visitors.MethodVariableRemovingVisitor;
 import software.coley.recaf.workspace.PathExportingManager;
 import software.coley.recaf.workspace.model.BasicWorkspace;
 import software.coley.recaf.workspace.model.Workspace;
@@ -2099,6 +2100,34 @@ public class Actions implements Service {
 	}
 
 	/**
+	 * Removes variable debug info in the given methods.
+	 *
+	 * @param workspace
+	 * 		Containing workspace.
+	 * @param resource
+	 * 		Containing resource.
+	 * @param bundle
+	 * 		Containing bundle.
+	 * @param declaringClass
+	 * 		Class declaring the methods.
+	 * @param methods
+	 * 		Methods to clean.
+	 */
+	public void removeMethodVariables(@Nonnull Workspace workspace,
+	                                  @Nonnull WorkspaceResource resource,
+	                                  @Nonnull JvmClassBundle bundle,
+	                                  @Nonnull JvmClassInfo declaringClass,
+	                                  @Nonnull Collection<MethodMember> methods) {
+		ClassReader reader = declaringClass.getClassReader();
+		ClassWriter writer = new ClassWriter(reader, 0);
+		MethodVariableRemovingVisitor visitor = new MethodVariableRemovingVisitor(writer, MethodPredicate.of(methods));
+		reader.accept(visitor, declaringClass.getClassReaderFlags());
+		bundle.put(declaringClass.toJvmClassBuilder()
+				.adaptFrom(writer.toByteArray())
+				.build());
+	}
+
+	/**
 	 * @param bundle
 	 * 		Containing bundle.
 	 * @param annotated
@@ -2200,7 +2229,7 @@ public class Actions implements Service {
 
 	@Nonnull
 	private <T extends AbstractSearchPane> T openSearchPane(@Nonnull String titleId, @Nonnull Ikon icon, @Nonnull Instance<T> paneProvider) {
-		// Place the tab in a region with other comments if possible.
+		// Place the tab in a region with other searches if possible.
 		DockablePath searchPath = dockingManager.getBento()
 				.search().dockable(d -> d.getNode() instanceof AbstractSearchPane);
 		DockContainerLeaf container = searchPath == null ? null : searchPath.leafContainer();
@@ -2216,6 +2245,7 @@ public class Actions implements Service {
 			stage.show();
 			stage.requestFocus();
 		}
+		dockable.setDragGroupMask(DockingManager.GROUP_ANYWHERE);
 		dockable.addCloseListener((_, _) -> paneProvider.destroy(content));
 		dockable.setContextMenuFactory(d -> {
 			ContextMenu menu = new ContextMenu();
@@ -2344,11 +2374,12 @@ public class Actions implements Service {
 		Dockable dockable = dockingManager.newDockable(title, graphicFactory, node);
 		node.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
 			if (keybindingConfig.getCloseTab().match(e))
-				dockable.inContainer(DockContainerLeaf::closeDockable);
+				closeDockable(dockable);
 		});
 		if (container != null) {
 			container.addDockable(dockable);
 			container.selectDockable(dockable);
+			node.requestFocus();
 		}
 		return dockable;
 	}
@@ -2375,13 +2406,42 @@ public class Actions implements Service {
 		Dockable dockable = dockingManager.newTranslatableDockable(title, graphicFactory, node);
 		node.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
 			if (keybindingConfig.getCloseTab().match(e))
-				dockable.inContainer(DockContainerLeaf::closeDockable);
+				closeDockable(dockable);
 		});
 		if (container != null) {
 			container.addDockable(dockable);
 			container.selectDockable(dockable);
+			focusSelectedDockableContent(container);
 		}
 		return dockable;
+	}
+
+	/**
+	 * Close the given dockable.
+	 *
+	 * @param dockable
+	 * 		Dockable to close.
+	 */
+	private void closeDockable(@Nonnull Dockable dockable) {
+		dockable.inContainer(container -> {
+			container.closeDockable(dockable);
+			focusSelectedDockableContent(container);
+		});
+	}
+
+	/**
+	 * Focuses the content of the selected dockable in the given container.
+	 *
+	 * @param container
+	 * 		Container to focus selected dockable content in.
+	 */
+	private void focusSelectedDockableContent(@Nonnull DockContainerLeaf container) {
+		Dockable selectedDockable = container.getSelectedDockable();
+		if (selectedDockable != null) {
+			Node node = selectedDockable.getNode();
+			if (node != null)
+				node.requestFocus();
+		}
 	}
 
 	/**
@@ -2429,9 +2489,9 @@ public class Actions implements Service {
 	 * @param dockable
 	 * 		Dockable reference.
 	 */
-	private static void addCloseActions(@Nonnull ContextMenu menu, @Nonnull Dockable dockable) {
+	private void addCloseActions(@Nonnull ContextMenu menu, @Nonnull Dockable dockable) {
 		menu.getItems().addAll(
-				action("menu.tab.close", CarbonIcons.CLOSE, () -> dockable.inContainer(DockContainerLeaf::closeDockable)),
+				action("menu.tab.close", CarbonIcons.CLOSE, () -> closeDockable(dockable)),
 				action("menu.tab.closeothers", CarbonIcons.CLOSE, () -> {
 					dockable.inContainer(container -> {
 						Unchecked.checkedForEach(container.getDockables(), d -> {

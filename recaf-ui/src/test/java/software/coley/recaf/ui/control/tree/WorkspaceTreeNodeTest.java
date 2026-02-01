@@ -1,5 +1,6 @@
 package software.coley.recaf.ui.control.tree;
 
+import javafx.scene.control.TreeItem;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -7,12 +8,15 @@ import software.coley.collections.Unchecked;
 import software.coley.recaf.info.BasicFileInfo;
 import software.coley.recaf.info.FileInfo;
 import software.coley.recaf.info.JvmClassInfo;
+import software.coley.recaf.info.Named;
+import software.coley.recaf.info.StubClassInfo;
 import software.coley.recaf.info.StubFileInfo;
 import software.coley.recaf.info.properties.BasicPropertyContainer;
 import software.coley.recaf.path.BundlePathNode;
 import software.coley.recaf.path.ClassPathNode;
 import software.coley.recaf.path.DirectoryPathNode;
 import software.coley.recaf.path.FilePathNode;
+import software.coley.recaf.path.PathNode;
 import software.coley.recaf.path.PathNodes;
 import software.coley.recaf.path.ResourcePathNode;
 import software.coley.recaf.path.WorkspacePathNode;
@@ -31,6 +35,8 @@ import software.coley.recaf.workspace.model.resource.WorkspaceResource;
 import software.coley.recaf.workspace.model.resource.WorkspaceResourceBuilder;
 
 import java.io.IOException;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -220,6 +226,91 @@ class WorkspaceTreeNodeTest {
 			assertTrue(root.removeNodeByPath(classPath));
 			assertNull(root.getNodeByPath(classPath), "Info not removed");
 		}
+	}
+
+	@Test
+	void nameCaseSensitivity() {
+		WorkspaceTreeNode root = new WorkspaceTreeNode(p5);
+		WorkspaceTreeNode bundle = root.getOrCreateNodeByPath(p3c);
+
+		// Add:
+		// - a
+		// - b
+		// - c (missing)
+		// - d
+		// - e
+		WorkspaceTreeNode a = root.getOrCreateNodeByPath(p3c.child("a"));
+		WorkspaceTreeNode b = root.getOrCreateNodeByPath(p3c.child("b"));
+		WorkspaceTreeNode d = root.getOrCreateNodeByPath(p3c.child("d"));
+		WorkspaceTreeNode e = root.getOrCreateNodeByPath(p3c.child("e"));
+		assertNotNull(a);
+		assertNotNull(b);
+		assertNotNull(d);
+		assertNotNull(e);
+
+		// Insert the missing "c" case
+		WorkspaceTreeNode c = root.getOrCreateNodeByPath(p3c.child("c"));
+		assertNotNull(c);
+
+		// Assert sorted order
+		List<TreeItem<PathNode<?>>> children = bundle.getSourceChildren();
+		assertArrayEquals(new Object[]{a, b, c, d, e}, children.toArray());
+
+		// Insert an upper-case "C" case, it should be before the lower "c"
+		WorkspaceTreeNode cu = root.getOrCreateNodeByPath(p3c.child("C"));
+		assertNotNull(cu);
+		assertArrayEquals(new Object[]{a, b, cu, c, d, e}, children.toArray());
+	}
+
+	@Test
+	void nameOverloadSensitivity() {
+		WorkspaceTreeNode root = new WorkspaceTreeNode(p5);
+		WorkspaceTreeNode bundle = root.getOrCreateNodeByPath(p3c);
+
+		// Adding classes with different capitalization should yield different nodes.
+		// Adding the same capitalization should yield the same node.
+		WorkspaceTreeNode a1 = root.getOrCreateNodeByPath(p3c.child("aaa"));
+		WorkspaceTreeNode a1_alt = root.getOrCreateNodeByPath(p3c.child("aaa"));
+		WorkspaceTreeNode a2 = root.getOrCreateNodeByPath(p3c.child("aaA"));
+		WorkspaceTreeNode a3 = root.getOrCreateNodeByPath(p3c.child("aAa"));
+		WorkspaceTreeNode a4 = root.getOrCreateNodeByPath(p3c.child("Aaa"));
+		WorkspaceTreeNode a5 = root.getOrCreateNodeByPath(p3c.child("AAA"));
+
+		// Same node check
+		assertSame(a1, a1_alt, "Same path yielded different node references");
+
+		// Different node check
+		List.of(a2,a3,a4,a5).forEach(n -> {
+			assertNotNull(n, "Expected node to be created");
+			assertNotSame(a1, n, "Different path yielded same node reference");
+		});
+	}
+
+	/**
+	 * The named path sorter was getting confused when checking "does 'a' have 'b' as a parent-directory" if either
+	 * String was empty, which is the case for classes in the default package. This led to inconsistent return value
+	 * from the {@link Comparator#compare(Object, Object)} implementation which broke the binary search used in
+	 * {@link WorkspaceTreeNode}.
+	 *
+	 * @see Named#STRING_PATH_COMPARATOR
+	 */
+	@Test
+	void emptyDirDoesNotNamedPathSorting() {
+		WorkspaceTreeNode root = new WorkspaceTreeNode(p5);
+		WorkspaceTreeNode bundle = root.getOrCreateNodeByPath(p3c);
+
+		// Our 'WorkspaceRootTreeNode' pre-sorts paths so it will use this specific method and set 'sorted=true'
+		// which is not the default value. This covers a special case where the 'default package' / 'root directory'
+		// was throwing off tree sorting before we added a special case for it.
+		WorkspaceTreeNode empty = WorkspaceTreeNode.getOrInsertIntoTree(root, p3c.child("").child(new StubClassInfo("module-info")), true);
+		WorkspaceTreeNode ex1 = WorkspaceTreeNode.getOrInsertIntoTree(root, p3c.child("example").child(new StubClassInfo("Foo")), true);
+		WorkspaceTreeNode ex2 = WorkspaceTreeNode.getOrInsertIntoTree(root, p3c.child("example").child(new StubClassInfo("Bar")), true);
+
+		// The tree should have both example paths have the same parent "example" node.
+		// The bundle should see two children, the empty directory, and the "example" directory.
+		List<TreeItem<PathNode<?>>> children = bundle.getSourceChildren();
+		assertSame(ex1.getParent(), ex2.getParent());
+		assertEquals(2, children.size());
 	}
 
 	@Test
