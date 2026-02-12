@@ -73,7 +73,9 @@ public class RecafApplication extends Application {
 		stage.setMinHeight(200 / scaleConfig.getScale());
 		stage.setWidth(900 / scaleConfig.getScale());
 		stage.setHeight(620 / scaleConfig.getScale());
-		stage.setScene(scene);
+		Stage scriptManagerWindow = windowManager.getScriptManagerWindow();
+		Scene scene1 = scriptManagerWindow.getScene();
+		stage.setScene(scene1);
 		stage.getIcons().add(Icons.getImage(Icons.LOGO));
 		stage.setTitle("Recaf");
 		stage.setOnCloseRequest(e -> ExitDebugLoggingHook.exit(0));
