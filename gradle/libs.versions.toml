@@ -34,7 +34,7 @@ mapping-io = "0.7.0"
 mockito = "5.19.0"
 natural-order = "1.1"
 picocli = "4.7.7"
-pe = "2.2.3"
+#pe = "2.2.3"
 procyon = "0.6.0"
 reactfx = { strictly = "2.0-M5" } # won't get updates, dead
 regex = "0.1.19"
@@ -128,7 +128,7 @@ natural-order = { module = "net.grey-panther:natural-comparator", version.ref = 
 
 picocli = { module = "info.picocli:picocli", version.ref = "picocli" }
 
-pe = { module = "com.github.cademtz:JavaPeParser", version.ref = "pe" }
+#pe = { module = "com.github.cademtz:JavaPeParser", version.ref = "pe" }
 
 procyon = { module = "org.bitbucket.mstrobel:procyon-compilertools", version.ref = "procyon" }
 

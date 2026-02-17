@@ -30,7 +30,7 @@ dependencies {
     api(libs.bundles.logging)
     api(libs.mapping.io)
     api(libs.natural.order)
-    api(libs.pe)
+//    api(libs.pe)
     api(libs.picocli)
     api(libs.procyon)
     api(libs.jlinker)

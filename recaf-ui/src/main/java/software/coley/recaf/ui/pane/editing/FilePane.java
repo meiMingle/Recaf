@@ -22,7 +22,7 @@ import software.coley.recaf.services.navigation.UpdatableNavigable;
 import software.coley.recaf.ui.config.KeybindingConfig;
 import software.coley.recaf.ui.pane.editing.binary.DecodingXmlPane;
 import software.coley.recaf.ui.pane.editing.binary.ElfPane;
-import software.coley.recaf.ui.pane.editing.binary.PePane;
+// import software.coley.recaf.ui.pane.editing.binary.PePane;
 import software.coley.recaf.ui.pane.editing.binary.hex.HexAdapter;
 import software.coley.recaf.ui.pane.editing.binary.hex.HexConfig;
 import software.coley.recaf.ui.pane.editing.media.AudioPane;
@@ -51,7 +51,7 @@ public class FilePane extends AbstractContentPane<FilePathNode> implements FileN
 	private final Instance<ImagePane> imageProvider;
 	private final Instance<VideoPane> videoProvider;
 	private final Instance<AudioPane> audioProvider;
-	private final Instance<PePane> execPeProvider;
+	// private final Instance<PePane> execPeProvider;
 	private final Instance<ElfPane> execElfProvider;
 	private final Instance<DecodingXmlPane> binaryXmlProvider;
 	private final HexConfig hexConfig;
@@ -65,7 +65,7 @@ public class FilePane extends AbstractContentPane<FilePathNode> implements FileN
 	                @Nonnull Instance<AudioPane> audioProvider,
 	                @Nonnull Instance<ImagePane> imageProvider,
 	                @Nonnull Instance<VideoPane> videoProvider,
-	                @Nonnull Instance<PePane> execPeProvider,
+	                // @Nonnull Instance<PePane> execPeProvider,
 	                @Nonnull Instance<ElfPane> execElfProvider,
 	                @Nonnull Instance<DecodingXmlPane> binaryXmlProvider,
 	                @Nonnull HexConfig hexConfig,
@@ -74,7 +74,7 @@ public class FilePane extends AbstractContentPane<FilePathNode> implements FileN
 		this.audioProvider = audioProvider;
 		this.imageProvider = imageProvider;
 		this.videoProvider = videoProvider;
-		this.execPeProvider = execPeProvider;
+		// this.execPeProvider = execPeProvider;
 		this.execElfProvider = execElfProvider;
 		this.binaryXmlProvider = binaryXmlProvider;
 		this.hexConfig = hexConfig;
@@ -151,7 +151,7 @@ public class FilePane extends AbstractContentPane<FilePathNode> implements FileN
 			case IMAGE -> setDisplay(imageProvider.get());
 			case AUDIO -> setDisplay(audioProvider.get());
 			case VIDEO -> setDisplay(videoProvider.get());
-			case EXECUTABLE_PE -> setDisplay(execPeProvider.get());
+			// case EXECUTABLE_PE -> setDisplay(execPeProvider.get());
 			case EXECUTABLE_ELF -> setDisplay(execElfProvider.get());
 			default -> throw new IllegalStateException("Unknown file mode: " + mode.name());
 		}
