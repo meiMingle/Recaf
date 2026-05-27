@@ -5,6 +5,7 @@ import com.google.devrel.gmscore.tools.apk.arsc.BinaryResourceValue;
 import com.google.devrel.gmscore.tools.apk.arsc.Chunk;
 import com.google.devrel.gmscore.tools.apk.arsc.PackageChunk;
 import com.google.devrel.gmscore.tools.apk.arsc.ResourceTableChunk;
+import com.google.devrel.gmscore.tools.apk.arsc.StringPoolChunk;
 import com.google.devrel.gmscore.tools.apk.arsc.TypeChunk;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -12,27 +13,23 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
-import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
-import it.unimi.dsi.fastutil.objects.Object2LongMap;
-import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import software.coley.android.xml.AndroidResourceProvider;
+import software.coley.recaf.util.collect.primitive.Int2ObjectMap;
+import software.coley.recaf.util.collect.primitive.Object2IntMap;
+import software.coley.recaf.util.collect.primitive.Object2LongMap;
 import software.coley.recaf.workspace.model.resource.AndroidApiResource;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.stream.Collectors;
 
 /**
  * Android resource information.
@@ -44,6 +41,7 @@ import java.util.stream.Collectors;
  * @author Matt Coley
  */
 public class AndroidRes implements AndroidResourceProvider {
+	private static final AndroidRes EMPTY = new AndroidRes();
 	private static final AndroidRes ANDROID_BASE;
 	private final Int2ObjectMap<String> resIdToName;
 	private final Object2IntMap<String> resNameToId;
@@ -53,6 +51,23 @@ public class AndroidRes implements AndroidResourceProvider {
 	private final Map<String, BinaryResourceValue> attrToSimpleResource;
 	private final Map<String, Map<Integer, BinaryResourceValue>> attrToComplexResource;
 	private final Map<String, Set<String>> formatToAttrs;
+	private final Map<String, List<ResourceEntry>> entriesByType;
+	private final Map<String, ResourceEntry> entriesByName;
+	private final Int2ObjectMap<ResourceEntry> entriesById;
+
+	private AndroidRes() {
+		this.resIdToName = new Int2ObjectMap<>(0);
+		this.resNameToId = new Object2IntMap<>(0);
+		this.attrToFormat = Collections.emptyMap();
+		this.attrToEnum = Collections.emptyMap();
+		this.attrToFlags = Collections.emptyMap();
+		this.attrToSimpleResource = Collections.emptyMap();
+		this.attrToComplexResource = Collections.emptyMap();
+		this.formatToAttrs = Collections.emptyMap();
+		this.entriesByType = Collections.emptyMap();
+		this.entriesByName = Collections.emptyMap();
+		this.entriesById = new Int2ObjectMap<>(0);
+	}
 
 	private AndroidRes(@Nonnull Int2ObjectMap<String> resIdToName,
 	                   @Nonnull Object2IntMap<String> resNameToId,
@@ -61,7 +76,10 @@ public class AndroidRes implements AndroidResourceProvider {
 	                   @Nonnull Map<String, Object2LongMap<String>> attrToFlags,
 	                   @Nonnull Map<String, BinaryResourceValue> attrToSimpleResource,
 	                   @Nonnull Map<String, Map<Integer, BinaryResourceValue>> attrToComplexResource,
-	                   @Nonnull Map<String, Set<String>> formatToAttrs) {
+	                   @Nonnull Map<String, Set<String>> formatToAttrs,
+	                   @Nonnull Map<String, List<ResourceEntry>> entriesByType,
+	                   @Nonnull Map<String, ResourceEntry> entriesByName,
+	                   @Nonnull Int2ObjectMap<ResourceEntry> entriesById) {
 		this.resIdToName = resIdToName;
 		this.resNameToId = resNameToId;
 		this.attrToFormat = attrToFormat;
@@ -70,6 +88,103 @@ public class AndroidRes implements AndroidResourceProvider {
 		this.attrToSimpleResource = attrToSimpleResource;
 		this.attrToComplexResource = attrToComplexResource;
 		this.formatToAttrs = formatToAttrs;
+		this.entriesByType = entriesByType;
+		this.entriesByName = entriesByName;
+		this.entriesById = entriesById;
+	}
+
+	/**
+	 * @return Resource identifier to name.
+	 */
+	@Nonnull
+	public Int2ObjectMap<String> getResIdToName() {
+		return resIdToName;
+	}
+
+	/**
+	 * @return Resource name to identifier.
+	 */
+	@Nonnull
+	public Object2IntMap<String> getResNameToId() {
+		return resNameToId;
+	}
+
+	/**
+	 * @return Attribute name to format identifier.
+	 */
+	@Nonnull
+	public Map<String, String> getAttrToFormat() {
+		return attrToFormat;
+	}
+
+	/**
+	 * @return Attribute name to enum value map.
+	 */
+	@Nonnull
+	public Map<String, Object2LongMap<String>> getAttrToEnum() {
+		return attrToEnum;
+	}
+
+	/**
+	 * @return Attribute name to flag value map.
+	 */
+	@Nonnull
+	public Map<String, Object2LongMap<String>> getAttrToFlags() {
+		return attrToFlags;
+	}
+
+	/**
+	 * @return Attribute name to simple binary resource value.
+	 */
+	@Nonnull
+	public Map<String, BinaryResourceValue> getAttrToSimpleResource() {
+		return attrToSimpleResource;
+	}
+
+	/**
+	 * @return Attribute name to complex binary resource value map.
+	 */
+	@Nonnull
+	public Map<String, Map<Integer, BinaryResourceValue>> getAttrToComplexResource() {
+		return attrToComplexResource;
+	}
+
+	/**
+	 * @return Format identifier to attribute names with that format.
+	 */
+	@Nonnull
+	public Map<String, Set<String>> getFormatToAttrs() {
+		return formatToAttrs;
+	}
+
+	/**
+	 * @return Resource entries grouped by type name.
+	 */
+	@Nonnull
+	public Map<String, List<ResourceEntry>> getEntriesByType() {
+		return entriesByType;
+	}
+
+	/**
+	 * @param fullName
+	 * 		Resource name in {@code type/name} format.
+	 *
+	 * @return Resource entry, or {@code null} if no entry exists with the given name.
+	 */
+	@Nullable
+	public ResourceEntry getResourceEntry(@Nonnull String fullName) {
+		return entriesByName.get(fullName);
+	}
+
+	/**
+	 * @param id
+	 * 		Resource identifier.
+	 *
+	 * @return Resource entry, or {@code null} if no entry exists with the given identifier.
+	 */
+	@Nullable
+	public ResourceEntry getResourceEntry(int id) {
+		return entriesById.get(id);
 	}
 
 	/**
@@ -83,19 +198,22 @@ public class AndroidRes implements AndroidResourceProvider {
 		List<Chunk> chunks = arsc.getChunks();
 
 		// Maps to collect data into.
-		Int2ObjectMap<String> resIdToName = new Int2ObjectOpenHashMap<>();
-		Object2IntMap<String> resNameToId = new Object2IntOpenHashMap<>();
+		Int2ObjectMap<String> resIdToName = new Int2ObjectMap<>();
+		Object2IntMap<String> resNameToId = new Object2IntMap<>();
 		Map<String, String> attrToFormat = new TreeMap<>();
 		Map<String, Object2LongMap<String>> attrToEnum = new TreeMap<>();
 		Map<String, Object2LongMap<String>> attrToFlags = new TreeMap<>();
 		Map<String, BinaryResourceValue> attrToSimpleResource = new TreeMap<>();
 		Map<String, Map<Integer, BinaryResourceValue>> attrToComplexResource = new TreeMap<>();
 		Map<String, Set<String>> formatToAttrs = new TreeMap<>();
+		Map<String, List<ResourceEntry>> entriesByType = new TreeMap<>();
+		Map<String, ResourceEntry> entriesByName = new TreeMap<>();
+		Int2ObjectMap<ResourceEntry> entriesById = new Int2ObjectMap<>();
 
 		// Parse the chunks in the ARSC, extracting all entries
 		for (Chunk chunk : chunks) {
-			if (chunk instanceof ResourceTableChunk) {
-				ResourceTableChunk resourceTableChunk = (ResourceTableChunk) chunk;
+			if (chunk instanceof ResourceTableChunk resourceTableChunk) {
+				StringPoolChunk stringPool = resourceTableChunk.getStringPool();
 				for (PackageChunk packageChunk : resourceTableChunk.getPackages()) {
 					int packageId = packageChunk.getId();
 					for (TypeChunk typeChunk : packageChunk.getTypeChunks()) {
@@ -105,23 +223,41 @@ public class AndroidRes implements AndroidResourceProvider {
 							int entryResId = packageId << 24 | typeId << 16 | entryId;
 							String key = entry.key();
 							String mapKey = typePrefix + "/" + key;
+							BinaryResourceValue simpleValue = null;
+							Map<Integer, BinaryResourceValue> complexValues = Collections.emptyMap();
+							String stringValue = null;
+							String resourcePath = null;
 							resIdToName.put(entryResId, mapKey);
 							resNameToId.put(mapKey, entryResId);
 							if (entry.isComplex()) {
-								Map<Integer, BinaryResourceValue> values = entry.values();
-								attrToComplexResource.put(mapKey, values);
+								complexValues = entry.values();
+								attrToComplexResource.put(mapKey, complexValues);
 							} else {
-								BinaryResourceValue value = entry.value();
-								attrToSimpleResource.put(mapKey, value);
+								simpleValue = entry.value();
+								attrToSimpleResource.put(mapKey, simpleValue);
+								stringValue = getStringValue(stringPool, simpleValue);
+								if (isResourcePath(stringValue))
+									resourcePath = stringValue;
 							}
+
+							ResourceEntry resourceEntry = new ResourceEntry(typePrefix, key, mapKey, entryResId,
+									simpleValue, complexValues, stringValue, resourcePath);
+							entriesByType.computeIfAbsent(typePrefix, ignored -> new ArrayList<>()).add(resourceEntry);
+							entriesByName.putIfAbsent(mapKey, resourceEntry);
+							if (!entriesById.containsKey(entryResId))
+								entriesById.put(entryResId, resourceEntry);
 						});
 					}
 				}
 			}
 		}
 
+		entriesByType.replaceAll((type, entries) -> Collections.unmodifiableList(entries.stream()
+				.sorted((a, b) -> a.name().compareToIgnoreCase(b.name()))
+				.toList()));
 		return new AndroidRes(resIdToName, resNameToId, attrToFormat, attrToEnum, attrToFlags,
-				attrToSimpleResource, attrToComplexResource, formatToAttrs);
+				attrToSimpleResource, attrToComplexResource, formatToAttrs,
+				Collections.unmodifiableMap(entriesByType), Collections.unmodifiableMap(entriesByName), entriesById);
 	}
 
 	/**
@@ -130,6 +266,28 @@ public class AndroidRes implements AndroidResourceProvider {
 	@Nonnull
 	public static AndroidRes getAndroidBase() {
 		return ANDROID_BASE;
+	}
+
+	/**
+	 * @return Instance of an empty resource mode.
+	 */
+	@Nonnull
+	public static AndroidRes getEmpty() {
+		return EMPTY;
+	}
+
+	@Nullable
+	private static String getStringValue(@Nullable StringPoolChunk stringPool, @Nullable BinaryResourceValue value) {
+		if (stringPool == null || value == null || value.type() != BinaryResourceValue.Type.STRING)
+			return null;
+		int index = value.data();
+		if (index < 0 || index >= stringPool.getStringCount())
+			return null;
+		return stringPool.getString(index);
+	}
+
+	private static boolean isResourcePath(@Nullable String text) {
+		return text != null && text.startsWith("res/");
 	}
 
 	/**
@@ -187,11 +345,12 @@ public class AndroidRes implements AndroidResourceProvider {
 		Object2LongMap<String> values = attrToEnum.get(resName);
 		if (values == null)
 			return null;
-		return values.object2LongEntrySet().stream()
-				.filter(e -> e.getLongValue() == value)
-				.findFirst()
-				.map(Map.Entry::getKey)
-				.orElse(null);
+		String[] result = new String[1];
+		values.forEach((key, val) -> {
+			if (val == value)
+				result[0] = key;
+		});
+		return result[0];
 	}
 
 	/**
@@ -281,11 +440,12 @@ public class AndroidRes implements AndroidResourceProvider {
 		Object2LongMap<String> values = attrToFlags.get(resName);
 		if (values == null)
 			return "";
-		return values.object2LongEntrySet().stream()
-				.filter(e -> (mask & e.getLongValue()) != 0L)
-				.sorted(Comparator.comparingLong(Object2LongMap.Entry::getLongValue))
-				.map(Map.Entry::getKey)
-				.collect(Collectors.joining("|"));
+		List<String> matches = new ArrayList<>();
+		values.forEach((key, val) -> {
+			if ((mask & val) != 0L)
+				matches.add(key);
+		});
+		return String.join("|", matches);
 	}
 
 	private static final Gson GSON = new GsonBuilder().create();
@@ -295,8 +455,8 @@ public class AndroidRes implements AndroidResourceProvider {
 			// Parse res-map entries (hex=name)
 			String resMapText = new String(AndroidApiResource.class.getResourceAsStream("/android/res-map.txt").readAllBytes());
 			String[] resMapLines = resMapText.split("[\n\r]+");
-			Int2ObjectMap<String> resIdToName = new Int2ObjectOpenHashMap<>(resMapLines.length);
-			Object2IntMap<String> resNameToId = new Object2IntOpenHashMap<>(resMapLines.length);
+			Int2ObjectMap<String> resIdToName = new Int2ObjectMap<>(resMapLines.length);
+			Object2IntMap<String> resNameToId = new Object2IntMap<>(resMapLines.length);
 			for (String line : resMapLines) {
 				String[] kv = line.split("=");
 				int key = Integer.parseInt(kv[0], 16);
@@ -314,7 +474,8 @@ public class AndroidRes implements AndroidResourceProvider {
 			JsonObject tree = (JsonObject) JsonParser.parseReader(new InputStreamReader(AndroidRes.class.getResourceAsStream("/android/attrs.json")));
 			visit(formatToAttrs, attrToFormat, attrToEnum, attrToFlags, tree);
 			ANDROID_BASE = new AndroidRes(resIdToName, resNameToId,
-					attrToFormat, attrToEnum, attrToFlags, Collections.emptyMap(), Collections.emptyMap(), formatToAttrs);
+					attrToFormat, attrToEnum, attrToFlags, Collections.emptyMap(), Collections.emptyMap(), formatToAttrs,
+					Collections.emptyMap(), Collections.emptyMap(), new Int2ObjectMap<>(0));
 		} catch (IOException ex) {
 			throw new IllegalStateException(ex);
 		}
@@ -339,7 +500,7 @@ public class AndroidRes implements AndroidResourceProvider {
 			} else {
 				JsonElement flagNode = childObject.get("flag");
 				if (flagNode instanceof JsonArray flagArray) {
-					Object2LongMap<String> nameToValue = new Object2LongOpenHashMap<>();
+					Object2LongMap<String> nameToValue = new Object2LongMap<>();
 					for (JsonElement flagEntry : flagArray) {
 						JsonObject flagObject = flagEntry.getAsJsonObject();
 						String flagName = flagObject.get("name").getAsString();
@@ -354,7 +515,7 @@ public class AndroidRes implements AndroidResourceProvider {
 				} else {
 					JsonElement enumNode = node.get("enum");
 					if (enumNode instanceof JsonArray enumArray) {
-						Object2LongMap<String> nameToValue = new Object2LongOpenHashMap<>();
+						Object2LongMap<String> nameToValue = new Object2LongMap<>();
 						for (JsonElement flagEntry : enumArray) {
 							JsonObject flagObject = flagEntry.getAsJsonObject();
 							String enumName = flagObject.get("name").getAsString();
@@ -375,5 +536,45 @@ public class AndroidRes implements AndroidResourceProvider {
 		for (JsonElement child : node.asMap().values())
 			if (child instanceof JsonObject childObject)
 				visit(formatToAttrs, attrToFormat, attrToEnum, attrToFlags, childObject);
+	}
+
+	/**
+	 * Resource table entry information for display and lookup.
+	 *
+	 * @param type
+	 * 		Resource type, such as {@code string}, {@code drawable}, or {@code layout}.
+	 * @param name
+	 * 		Resource local name.
+	 * @param fullName
+	 * 		Resource full name in {@code type/name} format.
+	 * @param id
+	 * 		Resource identifier.
+	 * @param simpleValue
+	 * 		Simple value, or {@code null} when the entry is complex.
+	 * @param complexValues
+	 * 		Complex values, or an empty map when the entry is simple.
+	 * @param stringValue
+	 * 		Decoded string value when the simple value points into the ARSC string pool.
+	 * @param resourcePath
+	 * 		Referenced resource payload path, usually under {@code res/}, when encoded as a string value.
+	 */
+	public record ResourceEntry(@Nonnull String type,
+	                            @Nonnull String name,
+	                            @Nonnull String fullName,
+	                            int id,
+	                            @Nullable BinaryResourceValue simpleValue,
+	                            @Nonnull Map<Integer, BinaryResourceValue> complexValues,
+	                            @Nullable String stringValue,
+	                            @Nullable String resourcePath) {
+		public ResourceEntry {
+			complexValues = Collections.unmodifiableMap(new TreeMap<>(complexValues));
+		}
+
+		/**
+		 * @return {@code true} when this is a complex map entry.
+		 */
+		public boolean isComplex() {
+			return simpleValue == null;
+		}
 	}
 }

@@ -3,9 +3,14 @@ package software.coley.recaf.services.cell.text;
 import jakarta.annotation.Nonnull;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.benf.cfr.reader.entities.annotations.ElementValue;
+import me.darknet.assembler.printer.DalvikCodePrinter;
+import me.darknet.assembler.printer.PrintContext;
+import me.darknet.dex.tree.definitions.instructions.Instruction;
+import me.darknet.dex.tree.simulation.ExecutionEngine;
+import org.benf.cfr.reader.util.collections.LazyMap;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
+import software.coley.cafedude.classfile.annotation.ElementValue;
 import software.coley.recaf.info.*;
 import software.coley.recaf.info.annotation.Annotated;
 import software.coley.recaf.info.annotation.AnnotationElement;
@@ -20,6 +25,7 @@ import software.coley.recaf.ui.config.MemberDisplayFormatConfig;
 import software.coley.recaf.services.text.TextFormatConfig;
 import software.coley.recaf.ui.control.tree.WorkspaceTreeCell;
 import software.coley.recaf.util.BlwUtil;
+import software.coley.recaf.util.EscapeUtil;
 import software.coley.recaf.util.Lang;
 import software.coley.recaf.util.StringUtil;
 import software.coley.recaf.util.Types;
@@ -27,6 +33,7 @@ import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.bundle.*;
 import software.coley.recaf.workspace.model.resource.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -226,12 +233,47 @@ public class TextProviderService implements Service {
 	 */
 	@Nonnull
 	public TextProvider getInstructionTextProvider(@Nonnull Workspace workspace,
-												   @Nonnull WorkspaceResource resource,
-												   @Nonnull ClassBundle<? extends ClassInfo> bundle,
-												   @Nonnull ClassInfo declaringClass,
-												   @Nonnull MethodMember declaringMethod,
-												   @Nonnull AbstractInsnNode insn) {
+	                                               @Nonnull WorkspaceResource resource,
+	                                               @Nonnull ClassBundle<? extends ClassInfo> bundle,
+	                                               @Nonnull ClassInfo declaringClass,
+	                                               @Nonnull MethodMember declaringMethod,
+	                                               @Nonnull AbstractInsnNode insn) {
 		return () -> formatConfig.filterMaxLength(BlwUtil.toString(insn));
+	}
+
+	/**
+	 * @param workspace
+	 * 		Containing workspace.
+	 * @param resource
+	 * 		Containing resource.
+	 * @param bundle
+	 * 		Containing bundle.
+	 * @param declaringClass
+	 * 		Containing class.
+	 * @param declaringMethod
+	 * 		Containing method.
+	 * @param insn
+	 * 		Variable to get the text of.
+	 *
+	 * @return Text provider for the instruction.
+	 */
+	@Nonnull
+	public TextProvider getInstructionTextProvider(@Nonnull Workspace workspace,
+	                                               @Nonnull WorkspaceResource resource,
+	                                               @Nonnull ClassBundle<? extends ClassInfo> bundle,
+	                                               @Nonnull ClassInfo declaringClass,
+	                                               @Nonnull MethodMember declaringMethod,
+	                                               @Nonnull Instruction insn) {
+
+		return () -> {
+			PrintContext.CodePrint ctx = new PrintContext.CodePrint(new PrintContext<>(" "));
+			DalvikCodePrinter printer = new DalvikCodePrinter(ctx,
+					new LazyMap<>(new HashMap<>(), v -> "v" + v),
+					new LazyMap<>(new HashMap<>(), v -> "L" + v));
+			ExecutionEngine.execute(printer, insn);
+			String text = ctx.toString().replace('\n', ' ').trim();
+			return formatConfig.filterMaxLength(text);
+		};
 	}
 
 	/**

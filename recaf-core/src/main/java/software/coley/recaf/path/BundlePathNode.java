@@ -2,6 +2,8 @@ package software.coley.recaf.path;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
+import software.coley.recaf.info.ClassInfo;
+import software.coley.recaf.info.FileInfo;
 import software.coley.recaf.info.Named;
 import software.coley.recaf.workspace.model.bundle.AndroidClassBundle;
 import software.coley.recaf.workspace.model.bundle.Bundle;
@@ -57,6 +59,28 @@ public class BundlePathNode extends AbstractPathNode<WorkspaceResource, Bundle> 
 	@Nonnull
 	public DirectoryPathNode child(@Nullable String directory) {
 		return new DirectoryPathNode(this, directory == null ? "" : directory);
+	}
+
+	/**
+	 * @param cls
+	 * 		Class to wrap in path node.
+	 *
+	 * @return Path node of class, with the current bundle + class package as parents.
+	 */
+	@Nonnull
+	public ClassPathNode child(@Nonnull ClassInfo cls) {
+		return new ClassPathNode(child(cls.getPackageName()), cls);
+	}
+
+	/**
+	 * @param file
+	 * 		File to wrap in path node.
+	 *
+	 * @return Path node of file, with the current bundle + file directory as parents.
+	 */
+	@Nonnull
+	public FilePathNode child(@Nonnull FileInfo file) {
+		return new FilePathNode(child(file.getDirectoryName()), file);
 	}
 
 	/**
@@ -130,6 +154,11 @@ public class BundlePathNode extends AbstractPathNode<WorkspaceResource, Bundle> 
 	public int localCompare(PathNode<?> o) {
 		if (this == o)
 			return 0;
+
+		// Embedded resource containers go after other bundles.
+		// We want to show bundles like 'classes' and 'files' in the UI first.
+		if (o instanceof EmbeddedResourceContainerPathNode)
+			return -1;
 
 		if (o instanceof BundlePathNode bundlePathNode) {
 			// Quick check for bundle reference equality. If they are the same bundle, then they are the same path.

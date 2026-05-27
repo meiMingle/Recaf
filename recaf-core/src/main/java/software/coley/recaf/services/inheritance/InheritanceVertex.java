@@ -6,7 +6,7 @@ import software.coley.collections.Sets;
 import software.coley.recaf.info.ClassInfo;
 import software.coley.recaf.info.member.FieldMember;
 import software.coley.recaf.info.member.MethodMember;
-import software.coley.recaf.util.Streams;
+import software.coley.recaf.util.collect.Streams;
 import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.resource.WorkspaceResource;
 
@@ -33,6 +33,7 @@ public class InheritanceVertex {
 	private volatile Set<InheritanceVertex> parents;
 	private volatile Set<InheritanceVertex> children;
 	private ClassInfo value;
+	private int valueHash;
 
 	/**
 	 * @param value
@@ -47,10 +48,10 @@ public class InheritanceVertex {
 	public InheritanceVertex(@Nonnull ClassInfo value,
 	                         @Nonnull Function<String, InheritanceVertex> lookup,
 	                         @Nonnull Function<String, Collection<String>> childrenLookup, boolean isPrimary) {
-		this.value = value;
 		this.lookup = lookup;
 		this.childrenLookup = childrenLookup;
 		this.isPrimary = isPrimary;
+		setValue(value);
 	}
 
 	/**
@@ -216,7 +217,7 @@ public class InheritanceVertex {
 	 * @return {@code true} if the vertex is of a child type to this vertex's {@link #getName() type}.
 	 */
 	public boolean isParentOf(@Nonnull InheritanceVertex vertex) {
-		return vertex.getAllParents().contains(this);
+		return vertex.allParents().anyMatch(v -> v == this);
 	}
 
 	/**
@@ -226,7 +227,7 @@ public class InheritanceVertex {
 	 * @return {@code true} if the vertex is of a parent type to this vertex's {@link #getName() type}.
 	 */
 	public boolean isChildOf(@Nonnull InheritanceVertex vertex) {
-		return getAllParents().contains(vertex);
+		return allParents().anyMatch(v -> v == vertex);
 	}
 
 	/**
@@ -287,11 +288,12 @@ public class InheritanceVertex {
 	 * @return {@code true} when this vertex has the given child.
 	 */
 	public boolean hasChild(@Nonnull String name) {
-		for (InheritanceVertex child : getAllChildren())
-			if (name.equals(child.getName()))
-				return true;
-
-		return false;
+		return allChildren().anyMatch(child -> {
+			ClassInfo childCls = child.getValue();
+			return name.equals(child.getName())
+					|| name.equals(childCls.getSuperName())
+					|| childCls.getInterfaces().contains(name);
+		});
 	}
 
 	/**
@@ -331,7 +333,7 @@ public class InheritanceVertex {
 	@Nonnull
 	public Stream<InheritanceVertex> allParents() {
 		// Skip 1 to skip ourselves (which we use as the seed vertex)
-		return Streams.recurseWithoutCycles(this, InheritanceVertex::getParents)
+		return Streams.recurseIdentityWithoutCycles(this, InheritanceVertex::getParents)
 				.skip(1);
 	}
 
@@ -384,7 +386,7 @@ public class InheritanceVertex {
 	@Nonnull
 	public Stream<InheritanceVertex> allChildren() {
 		// Skip 1 to skip ourselves (which we use as the seed vertex)
-		return Streams.recurseWithoutCycles(this, InheritanceVertex::getChildren)
+		return Streams.recurseIdentityWithoutCycles(this, InheritanceVertex::getChildren)
 				.skip(1);
 	}
 
@@ -476,6 +478,7 @@ public class InheritanceVertex {
 	 */
 	public void setValue(@Nonnull ClassInfo value) {
 		this.value = value;
+		this.valueHash = value.getName().hashCode();
 		clearCachedVertices();
 	}
 
@@ -489,7 +492,7 @@ public class InheritanceVertex {
 
 	@Override
 	public int hashCode() {
-		return getName().hashCode();
+		return valueHash;
 	}
 
 	@Override

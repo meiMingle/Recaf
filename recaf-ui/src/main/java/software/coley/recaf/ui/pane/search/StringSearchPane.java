@@ -49,10 +49,10 @@ public class StringSearchPane extends AbstractSearchPane {
 
 	@Inject
 	public StringSearchPane(@Nonnull WorkspaceManager workspaceManager,
-							@Nonnull SearchService searchService,
-							@Nonnull CellConfigurationService configurationService,
-							@Nonnull Actions actions,
-							@Nonnull StringPredicateProvider stringPredicateProvider) {
+	                        @Nonnull SearchService searchService,
+	                        @Nonnull CellConfigurationService configurationService,
+	                        @Nonnull Actions actions,
+	                        @Nonnull StringPredicateProvider stringPredicateProvider) {
 		super(workspaceManager, searchService, configurationService, actions);
 
 		this.stringPredicateProvider = stringPredicateProvider;
@@ -79,7 +79,7 @@ public class StringSearchPane extends AbstractSearchPane {
 		stringValue = textField.textProperty();
 		EventStreams.changesOf(stringValue)
 				.or(EventStreams.changesOf(stringPredicateId))
-				.reduceSuccessions(Collections::singletonList, Lists::add, Duration.ofMillis(Editor.SHORT_DELAY_MS))
+				.reduceSuccessions(Collections::singletonList, Lists::add, Duration.ofMillis(Editor.MEDIUM_DELAY_MS))
 				.addObserver(unused -> search());
 
 		setInputs(input);
@@ -99,6 +99,11 @@ public class StringSearchPane extends AbstractSearchPane {
 	@Nonnull
 	public StringProperty stringValueProperty() {
 		return stringValue;
+	}
+
+	@Override
+	protected boolean supportsFileSearchOptions() {
+		return true;
 	}
 
 	@Nullable

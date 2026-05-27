@@ -6,7 +6,7 @@ import software.coley.recaf.behavior.Closing;
 import software.coley.recaf.info.ClassInfo;
 import software.coley.recaf.info.Info;
 import software.coley.recaf.info.properties.PropertyContainer;
-import software.coley.recaf.util.Streams;
+import software.coley.recaf.util.collect.Streams;
 import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.bundle.AndroidClassBundle;
 import software.coley.recaf.workspace.model.bundle.Bundle;
@@ -62,9 +62,6 @@ public interface WorkspaceResource extends PropertyContainer, Closing {
 	 */
 	@Nonnull
 	Map<String, AndroidClassBundle> getAndroidClassBundles();
-
-	// TODO: Specific Android resource bundle for 'resources.arsc'?
-	//       - Or make custom FileInfo?
 
 	/**
 	 * @return Immediate files within the resource.

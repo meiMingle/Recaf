@@ -1,9 +1,9 @@
 package software.coley.recaf.util;
 
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import me.darknet.assembler.util.BlwOpcodes;
+import me.darknet.dex.tree.definitions.code.Code;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -24,6 +24,7 @@ import org.objectweb.asm.tree.MultiANewArrayInsnNode;
 import org.objectweb.asm.tree.TableSwitchInsnNode;
 import org.objectweb.asm.tree.TryCatchBlockNode;
 import org.objectweb.asm.tree.VarInsnNode;
+import software.coley.recaf.util.collect.primitive.Int2ObjectMap;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -683,7 +684,7 @@ public class AsmInsnUtil implements Opcodes {
 		// NullPointerException
 		return op == GETFIELD || op == PUTFIELD || op == ARRAYLENGTH ||
 				// NullPointerException, ArrayIndexOutOfBoundsException
-				(op >= IALOAD && op <= AASTORE) ||
+				(op >= IALOAD && op <= SASTORE) ||
 				// IllegalMonitorStateException
 				op == MONITORENTER || op == MONITOREXIT ||
 				// ArithmeticException
@@ -759,8 +760,9 @@ public class AsmInsnUtil implements Opcodes {
 	 * 		Output successor map.
 	 * @param predecessorMap
 	 * 		Output predecessor map.
+	 *
+	 * @see DexInsnUtil#populateFlowMaps(Code, Int2ObjectMap, Int2ObjectMap)
 	 */
-	@SuppressWarnings("StatementWithEmptyBody")
 	public static void populateFlowMaps(@Nonnull MethodNode method,
 	                                    @Nonnull Int2ObjectMap<List<Integer>> successorMap,
 	                                    @Nonnull Int2ObjectMap<List<Integer>> predecessorMap) {
@@ -834,10 +836,9 @@ public class AsmInsnUtil implements Opcodes {
 		}
 
 		// Populate predecessor map from successor map.
-		for (int i = 0; i < size; i++) {
+		for (int i = 0; i < size; i++)
 			for (int s : successorMap.getOrDefault(i, emptyList()))
 				predecessorMap.computeIfAbsent(s, _ -> new ArrayList<>()).add(i);
-		}
 	}
 
 	/**

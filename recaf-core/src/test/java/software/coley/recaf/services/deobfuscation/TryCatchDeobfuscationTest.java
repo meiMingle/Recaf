@@ -1,5 +1,6 @@
 package software.coley.recaf.services.deobfuscation;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import software.coley.recaf.services.deobfuscation.transform.generic.DuplicateCatchMergingTransformer;
@@ -14,7 +15,15 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Tests {@link DuplicateCatchMergingTransformer} / {@link RedundantTryCatchRemovingTransformer}.
  */
-public class TryCatchDeobfuscationTest extends BaseDeobfuscationTest {
+public class TryCatchDeobfuscationTest extends TransformerTestBase {
+	private static final String EXCEPTION_NAME = "BogusException";
+
+	@BeforeEach
+	void setupWorkspace() {
+		// Add the bogus exception class to the workspace for any tests that rely on it.
+		putClass(EXCEPTION_NAME, cn -> cn.superName = "java/lang/Exception");
+	}
+
 	/** Remove duplicate code among handler blocks where possible. */
 	@Test
 	void duplicateCatchHandlers() {
@@ -286,7 +295,7 @@ public class TryCatchDeobfuscationTest extends BaseDeobfuscationTest {
 				    }
 				}
 				""";
-		validateAfterAssembly(asm, List.of(RedundantTryCatchRemovingTransformer.class), dis ->{
+		validateAfterAssembly(asm, List.of(RedundantTryCatchRemovingTransformer.class), dis -> {
 			assertEquals(0, StringUtil.count("exceptions:", dis), "Expected to remove exceptions");
 
 			// Keep pop after cast, but remove at handler block
@@ -806,10 +815,11 @@ public class TryCatchDeobfuscationTest extends BaseDeobfuscationTest {
 					exceptions: {
 				       {  A,  B,  C, Ljava/lang/NullPointerException; }
 				    },
+				    parameters: { owner },
 				    code: {
 				    A:
 				        // field owner context is a parameter, and thus can be null or not-null
-				        aload 0
+				        aload owner
 				        iconst_0
 				        putfield Owner.intField I
 				    B:
@@ -828,10 +838,11 @@ public class TryCatchDeobfuscationTest extends BaseDeobfuscationTest {
 					exceptions: {
 				       {  A,  B,  C, Ljava/lang/NullPointerException; }
 				    },
+				    parameters: { owner },
 				    code: {
 				    A:
 				        // field owner context is a parameter, and thus can be null or not-null
-				        aload 0
+				        aload owner
 				        getfield Owner.intField I
 				        pop
 				    B:

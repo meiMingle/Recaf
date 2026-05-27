@@ -1,38 +1,37 @@
 [versions]
 acc-agent = "1.0.4"
 assertj = "3.27.3"
-asm = "9.9"
+asm = "9.9.1"
 atlantafx = "2.1.0"
 binary-resources = "31.3.0-alpha01.8"
 cafedude = "2.6.5"
 cdi-api = "4.1.0"
-cdi-impl = "6.0.2.Final"
+cdi-impl = "6.0.4.Final"
 #cfr = "0.152"
-cfr = "3d1d0f4c6d"
-dex-translator = "1.1.1"
+cfr = "f1a9308bca"
+dex = "7825de96c3"
 diffutils = "4.16"
 docking = "0.15.1"
-downgrader = "1.3.3"
-extra-collections = "1.7.0"
+downgrader = "1.3.6"
+extra-collections = "1.8.0"
 extra-observables = "1.3.0"
-gson = "2.13.1"
+gson = "2.14.0"
 ikonli = "12.4.0"
 image-io-ext = { strictly = "3.0.2" } # newer release breaks ico plugin
 image-io-ext-ico = "3.0.2"
 instrument-server = "1.5.0"
 jackson = "2.18.2"
 jakarta-annotation = "3.0.0"
-jasm = "aacebfa8b0"
-jelf = "0.10.0"
-jlinker = "1.0.7" # We could update, but I don't feel like rewriting the callgraph
-jphantom = "1.4.5"
+jasm = "16de0499c3"
+jelf = "0.11.0"
+jlinker = "3.0.1"
 junit = "5.13.4"
 junit-launch = "1.13.4"
 jsvg = "2.0.0"
-lljzip = "2.8.1"
-logback-classic = { strictly = "1.4.11" } # newer releases break in jar releases
-mapping-io = "0.7.0"
-mockito = "5.19.0"
+lljzip = "2.8.2"
+rainbowgum = "0.8.2"
+mapping-io = "0.8.0"
+mockito = "5.23.0"
 natural-order = "1.1"
 picocli = "4.7.7"
 pe = "2.2.3"
@@ -42,22 +41,10 @@ regex = "0.1.19"
 # richtextfx = "0.11.3"
 richtextfx = "cbdcbd1440"
 treemapfx = "1.1.0"
-vineflower = "1.11.2"
-#fernflower = "242.23726.103"
-#fernflower = "243.21565-EAP-CANDIDATE-SNAPSHOT"
-#fernflower = "243.22562.13-EAP-SNAPSHOT"
-#fernflower = "251.10074-EAP-CANDIDATE-SNAPSHOT"
-#fernflower = "243.23654-EAP-CANDIDATE-SNAPSHOT"
-#fernflower = "251.14649-EAP-CANDIDATE-SNAPSHOT"
-#fernflower = "251.17181.16-EAP-SNAPSHOT"
-#fernflower = "251.18673-EAP-CANDIDATE-SNAPSHOT"
-#fernflower = "251.20015.29-EAP-SNAPSHOT"
-#fernflower = "252.16512-EAP-CANDIDATE-SNAPSHOT"
-#fernflower = "252.18003-EAP-CANDIDATE-SNAPSHOT"
-#fernflower = "253.22441.33-EAP-SNAPSHOT"
+vineflower = "1.12.0"
 fernflower = "253.30387.90"
 forgeflower = "2.0.674.2"
-sourcesolver = "1.1.9"
+sourcesolver = "1.1.10"
 # Plugins
 benmanes-versions = "0.52.0"
 coverage-report-aggregator = "1.3.2"
@@ -90,7 +77,8 @@ cdi-impl = { module = "org.jboss.weld.se:weld-se-core", version.ref = "cdi-impl"
 #cfr = { module = "org.benf:cfr", version.ref = "cfr" }
 cfr = { module = "com.github.leibnitz27:cfr", version.ref = "cfr" }
 
-dex-translator = { module = "software.coley:dex-translator", version.ref = "dex-translator" }
+dex-core = { module = "com.github.jumanji144.dex:dex-core", version.ref = "dex" }
+dex-convert = { module = "com.github.jumanji144.dex:dex-convert", version.ref = "dex" }
 
 diffutils = { module = "io.github.java-diff-utils:java-diff-utils", version.ref = "diffutils" }
 
@@ -116,14 +104,13 @@ jackson = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-xml", 
 
 jakarta-annotation = { module = "jakarta.annotation:jakarta.annotation-api", version.ref = "jakarta-annotation" }
 
+jasm-composistion-dalvik = { module = "com.github.jumanji144.Jasm:jasm-composition-dalvik", version.ref = "jasm" }
 jasm-composistion-jvm = { module = "com.github.jumanji144.Jasm:jasm-composition-jvm", version.ref = "jasm" }
 jasm-core = { module = "com.github.jumanji144.Jasm:jasm-core", version.ref = "jasm" }
 
 jelf = { module = "net.fornwall:jelf", version.ref = "jelf" }
 
 jlinker = { module = "com.github.xxDark:jlinker", version.ref = "jlinker" }
-
-jphantom = { module = "org.clyze:jphantom", version.ref = "jphantom" }
 
 junit-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit" }
 junit-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit" }
@@ -134,7 +121,8 @@ jsvg = { module = "com.github.weisj:jsvg", version.ref = "jsvg" }
 
 lljzip = { module = "software.coley:lljzip", version.ref = "lljzip" }
 
-logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback-classic" }
+rainbowgum-core = { module = "io.jstach.rainbowgum:rainbowgum-core", version.ref = "rainbowgum" }
+rainbowgum-slf4j = { module = "io.jstach.rainbowgum:rainbowgum-slf4j", version.ref = "rainbowgum" }
 
 mapping-io = { module = "net.fabricmc:mapping-io", version.ref = "mapping-io" }
 
@@ -173,8 +161,13 @@ asm = [
     "asm-tree",
     "asm-util",
 ]
+dex = [
+    "dex-core",
+    "dex-convert",
+]
 jasm = [
     "jasm-core",
+    "jasm-composistion-dalvik",
     "jasm-composistion-jvm",
 ]
 downgrader = [
@@ -186,7 +179,8 @@ cdi = [
     "cdi-impl",
 ]
 logging = [
-    "logback-classic"
+    "rainbowgum-core",
+    "rainbowgum-slf4j"
 ]
 ikonli = [
     "ikonli-javafx",

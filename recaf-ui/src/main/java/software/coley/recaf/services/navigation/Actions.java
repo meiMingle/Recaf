@@ -8,7 +8,10 @@ import jakarta.inject.Inject;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.ObservableList;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
@@ -62,7 +65,7 @@ import software.coley.recaf.services.window.WindowFactory;
 import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.ui.config.KeybindingConfig;
 import software.coley.recaf.ui.control.FontIconView;
-import software.coley.recaf.ui.control.graph.MethodCallGraphsPane;
+import software.coley.recaf.ui.control.graph.MethodCallGraphTreesPane;
 import software.coley.recaf.ui.control.popup.AddMemberPopup;
 import software.coley.recaf.ui.control.popup.ItemListSelectionPopup;
 import software.coley.recaf.ui.control.popup.ItemTreeSelectionPopup;
@@ -88,10 +91,14 @@ import software.coley.recaf.ui.pane.search.MemberDeclarationSearchPane;
 import software.coley.recaf.ui.pane.search.MemberReferenceSearchPane;
 import software.coley.recaf.ui.pane.search.NumberSearchPane;
 import software.coley.recaf.ui.pane.search.StringSearchPane;
+import software.coley.recaf.ui.pane.search.StringTablePane;
+import software.coley.recaf.ui.pane.search.SimilarClassTablePane;
+import software.coley.recaf.ui.pane.search.SimilarMethodTablePane;
 import software.coley.recaf.util.Animations;
 import software.coley.recaf.util.ClipboardUtil;
 import software.coley.recaf.util.EscapeUtil;
 import software.coley.recaf.util.FxThreadUtil;
+import software.coley.recaf.util.Icons;
 import software.coley.recaf.util.Lang;
 import software.coley.recaf.util.StringUtil;
 import software.coley.recaf.util.visitors.ClassAnnotationRemovingVisitor;
@@ -105,6 +112,7 @@ import software.coley.recaf.util.visitors.MethodNoopingVisitor;
 import software.coley.recaf.util.visitors.MethodPredicate;
 import software.coley.recaf.util.visitors.MethodVariableRemovingVisitor;
 import software.coley.recaf.workspace.PathExportingManager;
+import software.coley.recaf.workspace.WorkspacePromotion;
 import software.coley.recaf.workspace.model.BasicWorkspace;
 import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.bundle.AndroidClassBundle;
@@ -140,6 +148,8 @@ import static software.coley.recaf.util.StringUtil.*;
 public class Actions implements Service {
 	public static final String ID = "actions";
 	private static final Logger logger = Logging.get(Actions.class);
+	private final List<Class<?>> SEARCH_PANE_TYPES = List.of(AbstractSearchPane.class, StringTablePane.class,
+			SimilarMethodTablePane.class, SimilarClassTablePane.class);
 	private final WorkspaceManager workspaceManager;
 	private final NavigationManager navigationManager;
 	private final DockingManager dockingManager;
@@ -157,7 +167,10 @@ public class Actions implements Service {
 	private final Instance<WorkspaceInformationPane> infoPaneProvider;
 	private final Instance<CommentEditPane> commentPaneProvider;
 	private final Instance<CommentListPane> commentListPaneProvider;
-	private final Instance<MethodCallGraphsPane> callGraphsPaneProvider;
+	private final Instance<MethodCallGraphTreesPane> callGraphsTreePaneProvider;
+	private final Instance<StringTablePane> stringTablePaneProvider;
+	private final Instance<SimilarClassTablePane> similarClassTablePaneProvider;
+	private final Instance<SimilarMethodTablePane> similarMethodTablePaneProvider;
 	private final Instance<StringSearchPane> stringSearchPaneProvider;
 	private final Instance<NumberSearchPane> numberSearchPaneProvider;
 	private final Instance<ClassReferenceSearchPane> classReferenceSearchPaneProvider;
@@ -188,9 +201,12 @@ public class Actions implements Service {
 	               @Nonnull Instance<WorkspaceInformationPane> infoPaneProvider,
 	               @Nonnull Instance<CommentEditPane> commentPaneProvider,
 	               @Nonnull Instance<CommentListPane> commentListPaneProvider,
+	               @Nonnull Instance<StringTablePane> stringTablePaneProvider,
+	               @Nonnull Instance<SimilarClassTablePane> similarClassTablePaneProvider,
+	               @Nonnull Instance<SimilarMethodTablePane> similarMethodTablePaneProvider,
 	               @Nonnull Instance<StringSearchPane> stringSearchPaneProvider,
 	               @Nonnull Instance<NumberSearchPane> numberSearchPaneProvider,
-	               @Nonnull Instance<MethodCallGraphsPane> callGraphsPaneProvider,
+	               @Nonnull Instance<MethodCallGraphTreesPane> callGraphsTreePaneProvider,
 	               @Nonnull Instance<ClassReferenceSearchPane> classReferenceSearchPaneProvider,
 	               @Nonnull Instance<MemberReferenceSearchPane> memberReferenceSearchPaneProvider,
 	               @Nonnull Instance<MemberDeclarationSearchPane> memberDeclarationSearchPaneProvider,
@@ -214,9 +230,12 @@ public class Actions implements Service {
 		this.infoPaneProvider = infoPaneProvider;
 		this.commentPaneProvider = commentPaneProvider;
 		this.commentListPaneProvider = commentListPaneProvider;
+		this.stringTablePaneProvider = stringTablePaneProvider;
+		this.similarClassTablePaneProvider = similarClassTablePaneProvider;
+		this.similarMethodTablePaneProvider = similarMethodTablePaneProvider;
 		this.stringSearchPaneProvider = stringSearchPaneProvider;
 		this.numberSearchPaneProvider = numberSearchPaneProvider;
-		this.callGraphsPaneProvider = callGraphsPaneProvider;
+		this.callGraphsTreePaneProvider = callGraphsTreePaneProvider;
 		this.classReferenceSearchPaneProvider = classReferenceSearchPaneProvider;
 		this.memberReferenceSearchPaneProvider = memberReferenceSearchPaneProvider;
 		this.memberDeclarationSearchPaneProvider = memberDeclarationSearchPaneProvider;
@@ -609,6 +628,34 @@ public class Actions implements Service {
 	}
 
 	/**
+	 * Opens a new workspace with the given resource promoted to the primary role.
+	 *
+	 * @param workspace
+	 * 		Containing workspace.
+	 * @param resource
+	 * 		Resource to promote to the new primary resource.
+	 */
+	public void openResourceAsWorkspace(@Nonnull Workspace workspace, @Nonnull WorkspaceResource resource) {
+		// Sanity check
+		if (resource == workspace.getPrimaryResource())
+			return;
+
+		// Let the user know that this will close any open tabs, but keep modifications to classes/files.
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION, Lang.get("dialog.content.promote-resource-workspace"), ButtonType.YES, ButtonType.NO);
+		alert.setTitle(Lang.get("dialog.title.promote-resource-workspace"));
+		alert.setHeaderText(Lang.get("dialog.header.promote-resource-workspace"));
+		Stage stage = (Stage) alert.getDialogPane().getScene().getWindow();
+		stage.getIcons().add(Icons.getImage(Icons.LOGO));
+		if (alert.showAndWait().orElse(ButtonType.NO) != ButtonType.YES)
+			return;
+
+		// Set the workspace to the new one with the resource promotion.
+		Workspace promotedWorkspace = WorkspacePromotion.promoteResourceToWorkspace(workspace, resource);
+		if (!workspaceManager.setCurrent(promotedWorkspace))
+			promotedWorkspace.close();
+	}
+
+	/**
 	 * Prompts the user to select a package to move the given class into.
 	 *
 	 * @param workspace
@@ -622,13 +669,13 @@ public class Actions implements Service {
 	 */
 	public void moveClass(@Nonnull Workspace workspace,
 	                      @Nonnull WorkspaceResource resource,
-	                      @Nonnull JvmClassBundle bundle,
-	                      @Nonnull JvmClassInfo info) {
+	                      @Nonnull ClassBundle<?> bundle,
+	                      @Nonnull ClassInfo info) {
 		boolean isRootDirectory = isNullOrEmpty(info.getPackageName());
 		ItemTreeSelectionPopup.forPackageNames(bundle, packages -> {
 					// We only allow a single package, so the list should contain just one item.
 					String oldPackage = isRootDirectory ? "" : info.getPackageName() + "/";
-					String newPackage = packages.get(0);
+					String newPackage = packages.getFirst();
 					if (Objects.equals(oldPackage, newPackage)) return;
 					if (!newPackage.isEmpty()) newPackage += "/";
 
@@ -702,20 +749,22 @@ public class Actions implements Service {
 	 */
 	public void movePackage(@Nonnull Workspace workspace,
 	                        @Nonnull WorkspaceResource resource,
-	                        @Nonnull JvmClassBundle bundle,
+	                        @Nonnull ClassBundle<?> bundle,
 	                        @Nonnull String packageName) {
 		boolean isRootDirectory = packageName.isEmpty();
 		ItemTreeSelectionPopup.forPackageNames(bundle, chosenPackages -> {
-					if (chosenPackages.isEmpty()) return;
-					String newPackageName = chosenPackages.get(0);
-					if (packageName.equals(newPackageName)) return;
+					if (chosenPackages.isEmpty())
+						return;
+					String newPackageName = chosenPackages.getFirst();
+					if (packageName.equals(newPackageName))
+						return;
 
 					// Create mappings for classes in the given package.
 					IntermediateMappings mappings = new IntermediateMappings();
 					String newPrefix = (newPackageName.isEmpty() ? "" : newPackageName + "/") + shortenPath(packageName) + "/";
 					if (isRootDirectory) {
 						// Source is default package
-						for (JvmClassInfo info : bundle.values()) {
+						for (ClassInfo info : bundle.values()) {
 							String name = info.getName();
 							if (name.indexOf('/') != -1) {
 								mappings.addClass(name, newPrefix + name);
@@ -724,7 +773,7 @@ public class Actions implements Service {
 					} else {
 						// Source is another package
 						String oldPrefix = packageName + "/";
-						for (JvmClassInfo info : bundle.values()) {
+						for (ClassInfo info : bundle.values()) {
 							String name = info.getName();
 							if (newPackageName.isEmpty() && name.indexOf('/') == -1) {
 								// Target is default package
@@ -766,7 +815,7 @@ public class Actions implements Service {
 		String localDirectoryName = shortenPath(directoryName);
 		ItemTreeSelectionPopup.forDirectoryNames(bundle, chosenDirectories -> {
 					if (chosenDirectories.isEmpty()) return;
-					String newDirectoryName = chosenDirectories.get(0);
+					String newDirectoryName = chosenDirectories.getFirst();
 					if (directoryName.equals(newDirectoryName)) return;
 
 					String prefix = directoryName + "/";
@@ -1185,7 +1234,7 @@ public class Actions implements Service {
 	 */
 	public void renamePackage(@Nonnull Workspace workspace,
 	                          @Nonnull WorkspaceResource resource,
-	                          @Nonnull JvmClassBundle bundle,
+	                          @Nonnull ClassBundle<?> bundle,
 	                          @Nonnull String packageName) {
 		boolean isRootDirectory = packageName.isEmpty();
 		new NamePopup(newPackageName -> {
@@ -1193,7 +1242,7 @@ public class Actions implements Service {
 			String oldPrefix = isRootDirectory ? "" : packageName + "/";
 			String newPrefix = newPackageName + "/";
 			IntermediateMappings mappings = new IntermediateMappings();
-			for (JvmClassInfo info : bundle.valuesAsCopy()) {
+			for (ClassInfo info : bundle.valuesAsCopy()) {
 				String className = info.getName();
 				if (isRootDirectory) {
 					// Source is the default package
@@ -1514,9 +1563,8 @@ public class Actions implements Service {
 		});
 	}
 
-
 	/**
-	 * Exports a class, prompting the user to select a location to save the class to.
+	 * Displays a call graph for a method, showing incoming and outgoing calls in separate trees.
 	 *
 	 * @param workspace
 	 * 		Containing workspace.
@@ -1532,23 +1580,23 @@ public class Actions implements Service {
 	 * @return Navigable reference to the call graph pane.
 	 */
 	@Nonnull
-	public Navigable openMethodCallGraph(@Nonnull Workspace workspace,
-	                                     @Nonnull WorkspaceResource resource,
-	                                     @Nonnull JvmClassBundle bundle,
-	                                     @Nonnull JvmClassInfo declaringClass,
-	                                     @Nonnull MethodMember method) {
+	public Navigable openMethodCallGraphTree(@Nonnull Workspace workspace,
+	                                         @Nonnull WorkspaceResource resource,
+	                                         @Nonnull ClassBundle<?> bundle,
+	                                         @Nonnull ClassInfo declaringClass,
+	                                         @Nonnull MethodMember method) {
 		return createContent(() -> {
 			// Create text/graphic for the tab to create.
-			String title = Lang.get("menu.view.methodcallgraph") + ": " + method.getName();
-			DockableIconFactory graphicFactory = d -> new FontIconView(CarbonIcons.FLOW);
+			String title = Lang.get("menu.view.methodcallgraph.tree") + ": " + method.getName();
+			DockableIconFactory graphicFactory = d -> new FontIconView(CarbonIcons.TREE_VIEW);
 
 			// Create content for the tab.
-			MethodCallGraphsPane content = callGraphsPaneProvider.get();
+			MethodCallGraphTreesPane content = callGraphsTreePaneProvider.get();
 			content.onUpdatePath(PathNodes.memberPath(workspace, resource, bundle, declaringClass, method));
 
 			// Build the tab.
 			Dockable dockable = createDockable(dockingManager.getPrimaryDockingContainer(), title, graphicFactory, content);
-			dockable.addCloseListener((_, _) -> callGraphsPaneProvider.destroy(content));
+			dockable.addCloseListener((_, _) -> callGraphsTreePaneProvider.destroy(content));
 			return dockable;
 		});
 	}
@@ -2180,11 +2228,19 @@ public class Actions implements Service {
 	}
 
 	/**
+	 * @return New string table pane, opened in a new docking tab.
+	 */
+	@Nonnull
+	public StringTablePane openNewStringTable() {
+		return openPaneAdjacent(SEARCH_PANE_TYPES, "menu.search.string-table", CarbonIcons.QUOTES, stringTablePaneProvider);
+	}
+
+	/**
 	 * @return New string search pane, opened in a new docking tab.
 	 */
 	@Nonnull
 	public StringSearchPane openNewStringSearch() {
-		return openSearchPane("menu.search.string", CarbonIcons.QUOTES, stringSearchPaneProvider);
+		return openPaneAdjacent(SEARCH_PANE_TYPES, "menu.search.string", CarbonIcons.QUOTES, stringSearchPaneProvider);
 	}
 
 	/**
@@ -2192,7 +2248,7 @@ public class Actions implements Service {
 	 */
 	@Nonnull
 	public NumberSearchPane openNewNumberSearch() {
-		return openSearchPane("menu.search.number", CarbonIcons.NUMBER_0, numberSearchPaneProvider);
+		return openPaneAdjacent(SEARCH_PANE_TYPES, "menu.search.number", CarbonIcons.NUMBER_0, numberSearchPaneProvider);
 	}
 
 	/**
@@ -2200,7 +2256,79 @@ public class Actions implements Service {
 	 */
 	@Nonnull
 	public ClassReferenceSearchPane openNewClassReferenceSearch() {
-		return openSearchPane("menu.search.class.type-references", CarbonIcons.CODE_REFERENCE, classReferenceSearchPaneProvider);
+		return openPaneAdjacent(SEARCH_PANE_TYPES, "menu.search.class.type-references", CarbonIcons.CODE_REFERENCE, classReferenceSearchPaneProvider);
+	}
+
+	/**
+	 * @param referenceClassPath
+	 * 		Class path used as the similarity reference.
+	 *
+	 * @return New similar-class search pane, opened in a new docking tab.
+	 */
+	@Nonnull
+	public SimilarClassTablePane openSimilarClassSearch(@Nonnull ClassPathNode referenceClassPath) {
+		DockablePath searchPath = dockingManager.getBento()
+				.search().dockable(d -> SEARCH_PANE_TYPES.stream().anyMatch(t -> t.isAssignableFrom(d.getNode().getClass())));
+		DockContainerLeaf container = searchPath == null ? null : searchPath.leafContainer();
+
+		SimilarClassTablePane content = similarClassTablePaneProvider.get();
+		content.onUpdatePath(referenceClassPath);
+		Dockable dockable;
+		if (container != null) {
+			dockable = createDockable(container, getBinding("menu.search.class-similar"),
+					d -> new FontIconView(CarbonIcons.CODE_REFERENCE), content);
+		} else {
+			dockable = createDockable(null, getBinding("menu.search.class-similar"),
+					d -> new FontIconView(CarbonIcons.CODE_REFERENCE), content);
+			Scene originScene = dockingManager.getPrimaryDockingContainer().asRegion().getScene();
+			Stage stage = dockingManager.getBento().stageBuilding().newStageForDockable(originScene, dockable, 900, 500);
+			stage.show();
+			stage.requestFocus();
+		}
+		dockable.setDragGroupMask(DockingManager.GROUP_ANYWHERE);
+		dockable.addCloseListener((_, _) -> similarClassTablePaneProvider.destroy(content));
+		dockable.setContextMenuFactory(d -> {
+			ContextMenu menu = new ContextMenu();
+			addCloseActions(menu, d);
+			return menu;
+		});
+		return content;
+	}
+
+	/**
+	 * @param referenceMethodPath
+	 * 		Method path used as the similarity reference.
+	 *
+	 * @return New similar-method search pane, opened in a new docking tab.
+	 */
+	@Nonnull
+	public SimilarMethodTablePane openSimilarMethodSearch(@Nonnull ClassMemberPathNode referenceMethodPath) {
+		DockablePath searchPath = dockingManager.getBento()
+				.search().dockable(d -> SEARCH_PANE_TYPES.stream().anyMatch(t -> t.isAssignableFrom(d.getNode().getClass())));
+		DockContainerLeaf container = searchPath == null ? null : searchPath.leafContainer();
+
+		SimilarMethodTablePane content = similarMethodTablePaneProvider.get();
+		content.onUpdatePath(referenceMethodPath);
+		Dockable dockable;
+		if (container != null) {
+			dockable = createDockable(container, getBinding("menu.search.method-similar"),
+					d -> new FontIconView(CarbonIcons.CODE_REFERENCE), content);
+		} else {
+			dockable = createDockable(null, getBinding("menu.search.method-similar"),
+					d -> new FontIconView(CarbonIcons.CODE_REFERENCE), content);
+			Scene originScene = dockingManager.getPrimaryDockingContainer().asRegion().getScene();
+			Stage stage = dockingManager.getBento().stageBuilding().newStageForDockable(originScene, dockable, 900, 500);
+			stage.show();
+			stage.requestFocus();
+		}
+		dockable.setDragGroupMask(DockingManager.GROUP_ANYWHERE);
+		dockable.addCloseListener((_, _) -> similarMethodTablePaneProvider.destroy(content));
+		dockable.setContextMenuFactory(d -> {
+			ContextMenu menu = new ContextMenu();
+			addCloseActions(menu, d);
+			return menu;
+		});
+		return content;
 	}
 
 	/**
@@ -2208,7 +2336,7 @@ public class Actions implements Service {
 	 */
 	@Nonnull
 	public MemberReferenceSearchPane openNewMemberReferenceSearch() {
-		return openSearchPane("menu.search.class.member-references", CarbonIcons.CODE_REFERENCE, memberReferenceSearchPaneProvider);
+		return openPaneAdjacent(SEARCH_PANE_TYPES, "menu.search.class.member-references", CarbonIcons.CODE_REFERENCE, memberReferenceSearchPaneProvider);
 	}
 
 	/**
@@ -2216,7 +2344,7 @@ public class Actions implements Service {
 	 */
 	@Nonnull
 	public MemberDeclarationSearchPane openNewMemberDeclarationSearch() {
-		return openSearchPane("menu.search.class.member-declarations", CarbonIcons.CODE, memberDeclarationSearchPaneProvider);
+		return openPaneAdjacent(SEARCH_PANE_TYPES, "menu.search.class.member-declarations", CarbonIcons.CODE, memberDeclarationSearchPaneProvider);
 	}
 
 	/**
@@ -2224,14 +2352,15 @@ public class Actions implements Service {
 	 */
 	@Nonnull
 	public InstructionSearchPane openNewInstructionSearch() {
-		return openSearchPane("menu.search.class.instruction", CarbonIcons.CODE, instructionSearchPaneProvider);
+		return openPaneAdjacent(SEARCH_PANE_TYPES, "menu.search.class.instruction", CarbonIcons.CODE, instructionSearchPaneProvider);
 	}
 
 	@Nonnull
-	private <T extends AbstractSearchPane> T openSearchPane(@Nonnull String titleId, @Nonnull Ikon icon, @Nonnull Instance<T> paneProvider) {
-		// Place the tab in a region with other searches if possible.
+	private <T extends Parent> T openPaneAdjacent(@Nonnull List<Class<?>> adjacentTypes, @Nonnull String titleId,
+	                                              @Nonnull Ikon icon, @Nonnull Instance<T> paneProvider) {
+		// Place the tab in a region with other panes of the given 'adjacent' types if possible.
 		DockablePath searchPath = dockingManager.getBento()
-				.search().dockable(d -> d.getNode() instanceof AbstractSearchPane);
+				.search().dockable(d -> adjacentTypes.stream().anyMatch(t -> t.isAssignableFrom(d.getNode().getClass())));
 		DockContainerLeaf container = searchPath == null ? null : searchPath.leafContainer();
 
 		T content = paneProvider.get();
@@ -2321,11 +2450,9 @@ public class Actions implements Service {
 				items.add(mode);
 			} else if (info instanceof AndroidClassInfo classInfo && contentPane instanceof AndroidClassPane content) {
 				Menu mode = menu("menu.mode", CarbonIcons.VIEW);
-				mode.getItems().addAll(
+				mode.getItems().add(
 						action("menu.mode.class.decompile", CarbonIcons.CODE,
-								() -> content.setEditorType(AndroidClassEditorType.DECOMPILE)),
-						action("menu.mode.file.smali", CarbonIcons.NUMBER_0,
-								() -> content.setEditorType(AndroidClassEditorType.SMALI))
+								() -> content.setEditorType(AndroidClassEditorType.DECOMPILE))
 				);
 				items.add(mode);
 			}
@@ -2336,7 +2463,6 @@ public class Actions implements Service {
 			return menu;
 		});
 	}
-
 
 	/**
 	 * Selects the containing {@link Dockable} that contains the navigable content.

@@ -14,8 +14,7 @@ import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.resource.WorkspaceFileResource;
 import software.coley.recaf.workspace.model.resource.WorkspaceResource;
 
-import static org.kordamp.ikonli.carbonicons.CarbonIcons.COPY_LINK;
-import static org.kordamp.ikonli.carbonicons.CarbonIcons.TRASH_CAN;
+import static org.kordamp.ikonli.carbonicons.CarbonIcons.*;
 
 /**
  * Basic implementation for {@link ResourceContextMenuProviderFactory}.
@@ -47,6 +46,8 @@ public class BasicResourceContextMenuProviderFactory extends AbstractContextMenu
 				if (resource instanceof WorkspaceFileResource fileResource) {
 					builder.item("menu.tab.copypath", COPY_LINK, () -> ClipboardUtil.copyString(fileResource.getFileInfo()));
 				}
+			} else if (resource != workspace.getPrimaryResource()) {
+				builder.resourceItem("menu.file.promoteprimary", WORKSPACE_IMPORT, actions::openResourceAsWorkspace);
 				builder.item("misc.remove", TRASH_CAN, () -> workspace.removeSupportingResource(resource));
 			}
 

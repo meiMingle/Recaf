@@ -33,6 +33,7 @@ import software.coley.recaf.services.script.ScriptEngine;
 import software.coley.recaf.services.script.ScriptFile;
 import software.coley.recaf.services.script.ScriptManager;
 import software.coley.recaf.services.script.ScriptManagerConfig;
+import software.coley.recaf.services.script.ScriptRunController;
 import software.coley.recaf.services.window.WindowFactory;
 import software.coley.recaf.ui.config.KeybindingConfig;
 import software.coley.recaf.ui.control.ActionButton;
@@ -45,7 +46,13 @@ import software.coley.recaf.ui.control.richtext.problem.ProblemPhase;
 import software.coley.recaf.ui.control.richtext.problem.ProblemTracking;
 import software.coley.recaf.ui.control.richtext.search.SearchBar;
 import software.coley.recaf.ui.window.RecafScene;
-import software.coley.recaf.util.*;
+import software.coley.recaf.util.Animations;
+import software.coley.recaf.util.DesktopUtil;
+import software.coley.recaf.util.EscapeUtil;
+import software.coley.recaf.util.FileChooserBuilder;
+import software.coley.recaf.util.FxThreadUtil;
+import software.coley.recaf.util.Lang;
+import software.coley.recaf.util.StringUtil;
 
 import java.io.File;
 import java.io.IOException;
@@ -69,6 +76,7 @@ public class ScriptManagerPane extends BorderPane {
 	private final ScriptManager scriptManager;
 	private final ScriptManagerConfig config;
 	private final ScriptEngine engine;
+	private final ScriptRunController scriptRunController;
 	private final FileTypeSyntaxAssociationService languageAssociation;
 	private final WindowFactory windowFactory;
 	private final RecafDirectoriesConfig directories;
@@ -79,6 +87,7 @@ public class ScriptManagerPane extends BorderPane {
 	public ScriptManagerPane(@Nonnull ScriptManagerConfig config,
 	                         @Nonnull ScriptManager scriptManager,
 	                         @Nonnull ScriptEngine engine,
+	                         @Nonnull ScriptRunController scriptRunController,
 	                         @Nonnull FileTypeSyntaxAssociationService languageAssociation,
 	                         @Nonnull WindowFactory windowFactory,
 	                         @Nonnull RecafDirectoriesConfig directories,
@@ -88,6 +97,7 @@ public class ScriptManagerPane extends BorderPane {
 		this.scriptManager = scriptManager;
 		this.config = config;
 		this.engine = engine;
+		this.scriptRunController = scriptRunController;
 		this.languageAssociation = languageAssociation;
 		this.directories = directories;
 		this.keys = keys;
@@ -148,8 +158,6 @@ public class ScriptManagerPane extends BorderPane {
 	 * Opens a new script editor.
 	 */
 	public void newScript() {
-		// TODO: Editor save prompts file location to save to in scripts dir
-		//  - Add toggle in manager button list to create 'advanced' script using class model
 		String template = """
 				// ==Metadata==
 				// @name Name
@@ -157,9 +165,27 @@ public class ScriptManagerPane extends BorderPane {
 				// @version 1.0.0
 				// @author Author
 				// ==/Metadata==
-								
-				System.out.println("Hello world");
+				
+				@Dependent
+				class MyScript {
+					WorkspaceManager wm;
+				
+					@Inject
+					MyScript(WorkspaceManager wm) {
+						// Inject any services you need here.
+						// See: https://recaf.coley.software/dev/services/index.html
+						this.wm = wm;
+					}
+				
+				    void run() {
+				        if (!wm.hasCurrentWorkspace()) return;
+				
+				        // Do any script work here.
+				        Workspace workspace = workspaceManager.getCurrent();
+				    }
+				}
 				""";
+
 		ScriptEditor scriptEditor = new ScriptEditor(languageAssociation, template, searchBarProvider.get());
 		Scene scene = new RecafScene(scriptEditor, 750, 400);
 		windowFactory.createAnonymousStage(scene, getBinding("menu.scripting.editor"), 750, 400).show();
@@ -269,50 +295,83 @@ public class ScriptManagerPane extends BorderPane {
 		 * Editor component to call {@link ScriptEngine#run(String)}.
 		 */
 		private class RunScriptComponent extends ActionButton {
+			private final Node GRAPHIC_EXEC = new FontIconView(CarbonIcons.PLAY_FILLED, Color.LIME);
+			private final Node GRAPHIC_STOP = new FontIconView(CarbonIcons.STOP_FILLED, Color.RED);
+
 			private RunScriptComponent() {
-				super(new FontIconView(CarbonIcons.PLAY_FILLED, Color.LIME), Lang.getBinding("menu.scripting.execute"),
-						() -> {
-							problemTracking.removeByPhase(ProblemPhase.BUILD);
-							engine.run(editor.getText()).whenCompleteAsync((result, throwable) -> {
-								if (result != null && result.wasSuccess()) {
-									// Don't care about compilation, just wanted to validate it was valid semantics.
-									Animations.animateSuccess(editor, 1000);
-								} else {
-									// Handle compile-result failure, or uncaught thrown exception.
-									if (result != null) {
-										for (CompilerDiagnostic diagnostic : result.getCompileDiagnostics())
-											problemTracking.addItem(Problem.fromDiagnostic(diagnostic));
-
-										// Display runtime error if given.
-										Throwable runtimeThrowable = result.getRuntimeThrowable();
-										if (runtimeThrowable != null) {
-											Label traceString = new Label(StringUtil.traceToString(runtimeThrowable));
-											traceString.setGraphic(new FontIconView(CarbonIcons.ERROR, Color.RED));
-
-											Popover popover = new Popover();
-											popover.setArrowLocation(Popover.ArrowLocation.BOTTOM_RIGHT);
-											popover.setContentNode(traceString);
-
-											// Hack to get self
-											ObservableList<Node> children = editor.getPrimaryStack().getChildrenUnmodifiable();
-											popover.show(children.get(children.size() - 1));
-										}
-									} else {
-										logger.error("Compilation encountered an error", throwable);
-									}
-									Animations.animateFailure(editor, 1000);
-								}
-
-								// Redraw paragraph graphics to update things like in-line problem graphics.
-								editor.redrawParagraphGraphics();
-							}, FxThreadUtil.executor());
-						});
+				setOnAction(e -> wrap(e, () -> {
+					if (scriptRunController.isRunning(getScriptKey()))
+						stop();
+					else if (!scriptRunController.isRunning())
+						execute();
+				}));
+				scriptRunController.executionStateVersionProperty()
+						.addListener((ob, old, cur) -> updateDisplay());
+				updateDisplay();
 
 				// Layout tweaks
 				StackPane.setAlignment(this, Pos.BOTTOM_RIGHT);
 				StackPane.setMargin(this, new Insets(7));
 				editor.getVerticalScrollbar().visibleProperty()
 						.addListener((ob, old, cur) -> ScrollbarPaddingUtil.handleScrollbarVisibility(this, cur));
+			}
+
+			private void execute() {
+				problemTracking.removeByPhase(ProblemPhase.BUILD);
+				scriptRunController.start(getScriptKey(), editor.getText()).whenCompleteAsync((result, error) -> {
+					if (result != null && result.wasCancelled())
+						return;
+
+					if (result != null && result.wasSuccess()) {
+						// Don't care about compilation, just wanted to validate it was valid semantics.
+						Animations.animateSuccess(editor, 1000);
+					} else {
+						// Handle compile-result failure, or uncaught thrown exception.
+						if (result != null) {
+							for (CompilerDiagnostic diagnostic : result.getCompileDiagnostics())
+								problemTracking.addItem(Problem.fromDiagnostic(diagnostic));
+
+							// Display runtime error if given.
+							Throwable runtimeThrowable = result.getRuntimeThrowable();
+							if (runtimeThrowable != null) {
+								Label traceString = new Label(StringUtil.traceToString(runtimeThrowable));
+								traceString.setGraphic(new FontIconView(CarbonIcons.ERROR, Color.RED));
+
+								Popover popover = new Popover();
+								popover.setArrowLocation(Popover.ArrowLocation.BOTTOM_RIGHT);
+								popover.setContentNode(traceString);
+
+								// Hack to get self
+								ObservableList<Node> children = editor.getPrimaryStack().getChildrenUnmodifiable();
+								popover.show(children.getLast());
+							}
+						} else {
+							logger.error("Compilation encountered an error", error);
+						}
+						Animations.animateFailure(editor, 1000);
+					}
+
+					// Redraw paragraph graphics to update things like in-line problem graphics.
+					editor.redrawParagraphGraphics();
+				}, FxThreadUtil.executor());
+			}
+
+			private void stop() {
+				scriptRunController.requestStop(getScriptKey());
+			}
+
+			@Nonnull
+			private Object getScriptKey() {
+				Path path = scriptPath;
+				return path == null ? ScriptEditor.this : path;
+			}
+
+			private void updateDisplay() {
+				boolean activeScript = scriptRunController.isRunning(getScriptKey());
+				boolean otherScriptActive = scriptRunController.isRunning() && !activeScript;
+				setGraphic(activeScript ? GRAPHIC_STOP : GRAPHIC_EXEC);
+				setText(Lang.get(activeScript ? "menu.scripting.stop" : "menu.scripting.execute"));
+				setDisable(otherScriptActive);
 			}
 		}
 	}
@@ -358,18 +417,33 @@ public class ScriptManagerPane extends BorderPane {
 			actions.setSpacing(4);
 			actions.setAlignment(Pos.CENTER_RIGHT);
 
-
 			ScriptEntry entry = this;
-			Button executeButton = new ActionButton(CarbonIcons.PLAY_FILLED_ALT, getBinding("menu.scripting.execute"), () -> {
-				script.execute(engine)
-						.whenComplete((result, error) -> {
-							if (result != null && result.wasSuccess()) {
-								Animations.animateSuccess(entry, 1000);
-							} else {
-								Animations.animateFailure(entry, 1000);
-							}
-						});
+			Path scriptKey = script.path();
+			Button executeButton = new ActionButton();
+			executeButton.setOnAction(e -> {
+				e.consume();
+
+				// The controller intentionally allows one active run atm, so only the owning row can stop it.
+				if (scriptRunController.isRunning(scriptKey)) {
+					scriptRunController.requestStop(scriptKey);
+				} else if (!scriptRunController.isRunning()) {
+					scriptRunController.start(scriptKey, script.source())
+							.whenCompleteAsync((result, error) -> {
+								if (result != null && result.wasCancelled())
+									return;
+								if (result != null && result.wasSuccess()) {
+									Animations.animateSuccess(entry, 1000);
+								} else {
+									if (error != null)
+										logger.error("Script execution encountered an error", error);
+									Animations.animateFailure(entry, 1000);
+								}
+							}, FxThreadUtil.executor());
+				}
 			});
+			scriptRunController.executionStateVersionProperty()
+					.addListener((ob, old, cur) -> updateExecuteButton(executeButton, scriptKey));
+			updateExecuteButton(executeButton, scriptKey);
 			executeButton.setAlignment(Pos.CENTER_LEFT);
 			executeButton.setPrefSize(130, 30);
 
@@ -386,6 +460,16 @@ public class ScriptManagerPane extends BorderPane {
 			setRight(actions);
 
 			prefWidthProperty().bind(widthProperty());
+		}
+
+		private void updateExecuteButton(@Nonnull Button button, @Nonnull Object scriptKey) {
+			boolean activeScript = scriptRunController.isRunning(scriptKey);
+			boolean otherScriptActive = scriptRunController.isRunning() && !activeScript;
+			// Non-owning rows remain execute buttons, but are disabled while another script owns the run handle.
+			button.setGraphic(new FontIconView(activeScript ? CarbonIcons.STOP_FILLED : CarbonIcons.PLAY_FILLED_ALT,
+					activeScript ? Color.RED : Color.LIME));
+			button.setText(Lang.get(activeScript ? "menu.scripting.stop" : "menu.scripting.execute"));
+			button.setDisable(otherScriptActive);
 		}
 
 		/**

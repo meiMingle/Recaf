@@ -114,11 +114,7 @@ public class BasicMethodContextMenuProviderFactory extends AbstractContextMenuPr
 			//    - Control flow graph
 			//    - Application flow graph
 			var view = builder.submenu("menu.view", VIEW);
-			if (declaringClass.isJvmClass()) {
-				JvmClassBundle jvmBundle = (JvmClassBundle) bundle;
-				JvmClassInfo declaringJvmClass = declaringClass.asJvmClass();
-				view.item("menu.view.methodcallgraph", FLOW, () -> actions.openMethodCallGraph(workspace, resource, jvmBundle, declaringJvmClass, method));
-			}
+			view.item("menu.view.methodcallgraph.tree", TREE_VIEW, () -> actions.openMethodCallGraphTree(workspace, resource, bundle, declaringClass, method));
 
 			// TODO: implement additional operations
 			//  - Deobfuscate
@@ -137,6 +133,10 @@ public class BasicMethodContextMenuProviderFactory extends AbstractContextMenuPr
 				pane.nameValueProperty().setValue(method.getName());
 				pane.descValueProperty().setValue(method.getDescriptor());
 			});
+			if (declaringClass.isJvmClass()) {
+				builder.item("menu.search.method-similar", CODE_REFERENCE,
+						() -> actions.openSimilarMethodSearch(PathNodes.memberPath(workspace, resource, bundle, declaringClass, method)));
+			}
 
 			// Copy path
 			builder.item("menu.tab.copypath", COPY_LINK, () -> ClipboardUtil.copyString(declaringClass, method));

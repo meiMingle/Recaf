@@ -2,10 +2,10 @@ package software.coley.recaf.path;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
+import software.coley.collections.Lists;
 import software.coley.collections.Maps;
 import software.coley.collections.Unchecked;
 import software.coley.recaf.info.Named;
-import software.coley.recaf.util.CollectionUtils;
 import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.bundle.Bundle;
 import software.coley.recaf.workspace.model.resource.WorkspaceFileResource;
@@ -132,18 +132,25 @@ public class ResourcePathNode extends AbstractPathNode<Workspace, WorkspaceResou
 
 			if (parent instanceof EmbeddedResourceContainerPathNode) {
 				PathNode<WorkspaceResource> parentOfParent = Unchecked.cast(parent.getParent());
-				Map<WorkspaceFileResource, String> lookup = Maps.reverse(parentOfParent.getValue().getEmbeddedResources());
-				String ourKey = lookup.getOrDefault(resource, "?");
-				String otherKey = lookup.getOrDefault(otherResource, "?");
+				Map<String, WorkspaceFileResource> embeddedResources = parentOfParent.getValue().getEmbeddedResources();
+				String ourKey = Objects.requireNonNullElse(Maps.identityKeyOf(embeddedResources, resource), "?");
+				String otherKey = Objects.requireNonNullElse(Maps.identityKeyOf(embeddedResources, otherResource), "?");
 				return Named.STRING_PATH_COMPARATOR.compare(ourKey, otherKey);
 			} else {
 				if (workspace != null) {
 					if (resource == otherResource)
 						return 0;
 
-					// Show in order as in the workspace.
+					// Show in order as in the workspace (unknown/supporting resources shown last).
 					List<WorkspaceResource> resources = workspace.getAllResources(false);
-					return Integer.compare(CollectionUtils.identityIndexOf(resources, resource), CollectionUtils.identityIndexOf(resources, otherResource));
+					int thisIndex = Lists.identityIndexOf(resources, resource);
+					int otherIndex = Lists.identityIndexOf(resources, otherResource);
+					if (thisIndex == -1 && otherIndex >= 0)
+						return 1;
+					else if (thisIndex >= 0 && otherIndex == -1)
+						return -1;
+					else
+						return Integer.compare(thisIndex, otherIndex);
 				} else {
 					// Enforce some ordering. Not ideal but works.
 					return Named.STRING_COMPARATOR.compare(

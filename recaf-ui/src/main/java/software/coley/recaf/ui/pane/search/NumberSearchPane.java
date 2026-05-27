@@ -50,10 +50,10 @@ public class NumberSearchPane extends AbstractSearchPane {
 
 	@Inject
 	public NumberSearchPane(@Nonnull WorkspaceManager workspaceManager,
-							@Nonnull SearchService searchService,
-							@Nonnull CellConfigurationService configurationService,
-							@Nonnull Actions actions,
-							@Nonnull NumberPredicateProvider numberPredicateProvider) {
+	                        @Nonnull SearchService searchService,
+	                        @Nonnull CellConfigurationService configurationService,
+	                        @Nonnull Actions actions,
+	                        @Nonnull NumberPredicateProvider numberPredicateProvider) {
 		super(workspaceManager, searchService, configurationService, actions);
 
 		this.numberPredicateProvider = numberPredicateProvider;
@@ -78,7 +78,7 @@ public class NumberSearchPane extends AbstractSearchPane {
 
 		EventStreams.changesOf(numericValueProperty)
 				.or(EventStreams.changesOf(numericPredicateId))
-				.reduceSuccessions(Collections::singletonList, Lists::add, Duration.ofMillis(Editor.SHORT_DELAY_MS))
+				.reduceSuccessions(Collections::singletonList, Lists::add, Duration.ofMillis(Editor.MEDIUM_DELAY_MS))
 				.addObserver(unused -> search());
 
 		setInputs(input);
@@ -106,6 +106,11 @@ public class NumberSearchPane extends AbstractSearchPane {
 	@Nonnull
 	public ObjectProperty<Class<? extends Number>> numericTypePropertyProperty() {
 		return numericTypeProperty;
+	}
+
+	@Override
+	protected boolean supportsFileSearchOptions() {
+		return true;
 	}
 
 	@Nullable
