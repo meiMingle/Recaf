@@ -55,6 +55,7 @@ import software.coley.recaf.services.cell.CellConfigurationService;
 import software.coley.recaf.services.cell.icon.IconProvider;
 import software.coley.recaf.services.cell.icon.IconProviderService;
 import software.coley.recaf.services.cell.text.TextProviderService;
+import software.coley.recaf.services.analysis.structure.AreaAnalysisResult;
 import software.coley.recaf.services.inheritance.InheritanceGraph;
 import software.coley.recaf.services.inheritance.InheritanceGraphService;
 import software.coley.recaf.services.mapping.IntermediateMappings;
@@ -66,15 +67,16 @@ import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.ui.config.KeybindingConfig;
 import software.coley.recaf.ui.control.FontIconView;
 import software.coley.recaf.ui.control.graph.MethodCallGraphTreesPane;
+import software.coley.recaf.ui.pane.analysis.AreaAnalysisPane;
 import software.coley.recaf.ui.control.popup.AddMemberPopup;
 import software.coley.recaf.ui.control.popup.ItemListSelectionPopup;
 import software.coley.recaf.ui.control.popup.ItemTreeSelectionPopup;
 import software.coley.recaf.ui.control.popup.NamePopup;
 import software.coley.recaf.ui.control.popup.OverrideMethodPopup;
 import software.coley.recaf.ui.docking.DockingManager;
-import software.coley.recaf.ui.pane.CommentEditPane;
-import software.coley.recaf.ui.pane.CommentListPane;
-import software.coley.recaf.ui.pane.DocumentationPane;
+import software.coley.recaf.ui.pane.analysis.CommentEditPane;
+import software.coley.recaf.ui.pane.analysis.CommentListPane;
+import software.coley.recaf.ui.pane.analysis.DocumentationPane;
 import software.coley.recaf.ui.pane.WorkspaceInformationPane;
 import software.coley.recaf.ui.pane.editing.AbstractContentPane;
 import software.coley.recaf.ui.pane.editing.FileDisplayMode;
@@ -165,6 +167,7 @@ public class Actions implements Service {
 	private final Instance<FilePane> filePaneProvider;
 	private final Instance<AssemblerPane> assemblerPaneProvider;
 	private final Instance<WorkspaceInformationPane> infoPaneProvider;
+	private final Instance<AreaAnalysisPane> areaAnalysisPaneProvider;
 	private final Instance<CommentEditPane> commentPaneProvider;
 	private final Instance<CommentListPane> commentListPaneProvider;
 	private final Instance<MethodCallGraphTreesPane> callGraphsTreePaneProvider;
@@ -199,6 +202,7 @@ public class Actions implements Service {
 	               @Nonnull Instance<FilePane> filePaneProvider,
 	               @Nonnull Instance<AssemblerPane> assemblerPaneProvider,
 	               @Nonnull Instance<WorkspaceInformationPane> infoPaneProvider,
+	               @Nonnull Instance<AreaAnalysisPane> areaAnalysisPaneProvider,
 	               @Nonnull Instance<CommentEditPane> commentPaneProvider,
 	               @Nonnull Instance<CommentListPane> commentListPaneProvider,
 	               @Nonnull Instance<StringTablePane> stringTablePaneProvider,
@@ -228,6 +232,7 @@ public class Actions implements Service {
 		this.filePaneProvider = filePaneProvider;
 		this.assemblerPaneProvider = assemblerPaneProvider;
 		this.infoPaneProvider = infoPaneProvider;
+		this.areaAnalysisPaneProvider = areaAnalysisPaneProvider;
 		this.commentPaneProvider = commentPaneProvider;
 		this.commentListPaneProvider = commentListPaneProvider;
 		this.stringTablePaneProvider = stringTablePaneProvider;
@@ -606,9 +611,82 @@ public class Actions implements Service {
 		CommentListPane content = commentListPaneProvider.get();
 		Dockable dockable = dockingManager.newTranslatableDockable("menu.analysis.list-comments", CarbonIcons.CHAT, content);
 		dockable.addCloseListener((_, _) -> commentListPaneProvider.destroy(content));
+		dockable.setContextMenuFactory(d -> {
+			ContextMenu menu = new ContextMenu();
+			addCloseActions(menu, d);
+			return menu;
+		});
 		container.addDockable(dockable);
 
 		container.selectDockable(dockable);
+		content.requestFocus();
+	}
+
+	/**
+	 * Display the application area analysis pane using the primary resource.
+	 */
+	public void openAreaAnalysis() {
+		if (!workspaceManager.hasCurrentWorkspace())
+			return;
+		Workspace workspace = workspaceManager.getCurrent();
+		openAreaAnalysis(workspace.getPrimaryResource());
+	}
+
+	/**
+	 * Display the application area analysis pane with the given resource selected.
+	 *
+	 * @param resource
+	 * 		Resource to analyze. When {@code null}, the current primary resource is used.
+	 */
+	public void openAreaAnalysis(@Nullable WorkspaceResource resource) {
+		openAreaAnalysis(resource, null);
+	}
+
+	/**
+	 * Display the application area analysis pane with the given resource selected, optionally using a precomputed result.
+	 *
+	 * @param resource
+	 * 		Resource to analyze. When {@code null}, the current primary resource is used.
+	 * @param result
+	 * 		Existing result to display immediately. When {@code null}, the pane will perform analysis itself.
+	 */
+	public void openAreaAnalysis(@Nullable WorkspaceResource resource, @Nullable AreaAnalysisResult result) {
+		if (!workspaceManager.hasCurrentWorkspace())
+			return;
+
+		Workspace workspace = workspaceManager.getCurrent();
+		WorkspaceResource target = resource == null ? workspace.getPrimaryResource() : resource;
+		for (DockablePath path : dockingManager.getBento().search().allDockables()) {
+			Dockable dockable = path.dockable();
+			Node node = dockable.nodeProperty().get();
+			if (node instanceof AreaAnalysisPane areaAnalysisPane) {
+				path.leafContainer().selectDockable(dockable);
+				FxThreadUtil.run(() -> {
+					if (result != null)
+						areaAnalysisPane.setResult(target, result);
+					else
+						areaAnalysisPane.selectResource(target);
+					node.requestFocus();
+					Animations.animateNotice(node, 1000);
+				});
+				return;
+			}
+		}
+
+		DockContainerLeaf container = dockingManager.getPrimaryDockingContainer();
+		AreaAnalysisPane content = areaAnalysisPaneProvider.get();
+		Dockable dockable = createDockable(container, getBinding("service.analysis.areas"),
+				d -> new FontIconView(CarbonIcons.CHART_CUSTOM), content);
+		dockable.setContextMenuFactory(d -> {
+			ContextMenu menu = new ContextMenu();
+			addCloseActions(menu, d);
+			return menu;
+		});
+		dockable.addCloseListener((_, _) -> areaAnalysisPaneProvider.destroy(content));
+		if (result != null)
+			content.setResult(target, result);
+		else
+			content.selectResource(target);
 		content.requestFocus();
 	}
 

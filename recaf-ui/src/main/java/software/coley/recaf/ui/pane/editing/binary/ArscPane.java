@@ -26,7 +26,10 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import org.slf4j.Logger;
+import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.info.ArscFileInfo;
 import software.coley.recaf.info.BinaryXmlFileInfo;
 import software.coley.recaf.info.FileInfo;
@@ -37,10 +40,12 @@ import software.coley.recaf.services.navigation.FileNavigable;
 import software.coley.recaf.services.navigation.Navigable;
 import software.coley.recaf.services.navigation.UpdatableNavigable;
 import software.coley.recaf.ui.control.BoundLabel;
+import software.coley.recaf.ui.pane.editing.ByteLoadingOverlay;
 import software.coley.recaf.util.Animations;
 import software.coley.recaf.util.Lang;
 import software.coley.recaf.util.android.AndroidRes;
 import software.coley.recaf.util.android.AndroidRes.ResourceEntry;
+import software.coley.recaf.util.threading.ThreadUtil;
 import software.coley.recaf.workspace.model.Workspace;
 
 import java.io.ByteArrayInputStream;
@@ -48,8 +53,13 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static software.coley.recaf.util.android.AndroidXmlUtil.*;
 
 /**
  * Displays the contents of a {@link ArscFileInfo}. These resource bundles are generally glorified KV pairs, but they
@@ -59,12 +69,17 @@ import java.util.Map;
  */
 @Dependent
 public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavigable {
+	private static final Logger logger = Logging.get(ArscPane.class);
 	private final Instance<DecodingXmlPane> xmlPaneProvider;
+	private final AtomicInteger loadGeneration = new AtomicInteger();
+	private final BorderPane content = new BorderPane();
+	private final ByteLoadingOverlay loadingOverlay = new ByteLoadingOverlay("arscviewer.loading");
 	private FilePathNode path;
 
 	@Inject
 	public ArscPane(@Nonnull Instance<DecodingXmlPane> xmlPaneProvider) {
 		this.xmlPaneProvider = xmlPaneProvider;
+		setCenter(new StackPane(content, loadingOverlay));
 	}
 
 	@Nonnull
@@ -81,7 +96,9 @@ public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavi
 
 	@Override
 	public void disable() {
+		loadGeneration.incrementAndGet();
 		setDisable(true);
+		hideLoading();
 	}
 
 	@Override
@@ -95,17 +112,41 @@ public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavi
 	}
 
 	private void refresh(@Nonnull ArscFileInfo arscInfo) {
-		AndroidRes resources = arscInfo.getResourceInfo();
+		int currentGeneration = loadGeneration.incrementAndGet();
+		Workspace workspace = path.getValueOfType(Workspace.class);
+		showLoading(arscInfo);
+		CompletableFuture.supplyAsync(() -> loadContent(arscInfo), ThreadUtil.executor())
+				.whenCompleteAsync((loadResult, throwable) -> {
+					if (currentGeneration != loadGeneration.get() || path == null || path.getValue() != arscInfo)
+						return;
 
+					hideLoading();
+					if (throwable != null) {
+						logger.error("Failed to decode '{}'", arscInfo.getName(), throwable);
+						content.setCenter(new BoundLabel(Lang.getBinding("arscviewer.no-resources-placeholder")));
+						return;
+					}
+
+					content.setCenter(createTabs(workspace, loadResult.resources(), loadResult.entriesByType()));
+				}, software.coley.recaf.util.FxThreadUtil.executor());
+	}
+
+	@Nonnull
+	private ArscLoadResult loadContent(@Nonnull ArscFileInfo arscInfo) {
+		AndroidRes resources = arscInfo.getResourceInfo();
+		Map<String, List<ResourceEntry>> entriesByType = new LinkedHashMap<>(resources.getEntriesByType());
+		return new ArscLoadResult(resources, entriesByType);
+	}
+
+	@Nonnull
+	private Node createTabs(@Nullable Workspace workspace,
+	                        @Nonnull AndroidRes resources,
+	                        @Nonnull Map<String, List<ResourceEntry>> entriesByType) {
 		// Group entries by type and fill a placeholder if there are no resources.
-		Map<String, List<ResourceEntry>> entriesByType = resources.getEntriesByType();
-		if (entriesByType.isEmpty()) {
-			setCenter(new BoundLabel(Lang.getBinding("arscviewer.no-resources-placeholder")));
-			return;
-		}
+		if (entriesByType.isEmpty())
+			return new BoundLabel(Lang.getBinding("arscviewer.no-resources-placeholder"));
 
 		// Create a tab for each resource type.
-		Workspace workspace = path.getValueOfType(Workspace.class);
 		TabPane tabs = new TabPane();
 		entriesByType.forEach((type, entries) -> {
 			Tab tab = new Tab(type);
@@ -113,7 +154,17 @@ public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavi
 			tab.setContent(createTypeContent(workspace, resources, entries));
 			tabs.getTabs().add(tab);
 		});
-		setCenter(tabs);
+		return tabs;
+	}
+
+	private void showLoading(@Nonnull ArscFileInfo arscInfo) {
+		content.setMouseTransparent(true);
+		loadingOverlay.show(arscInfo);
+	}
+
+	private void hideLoading() {
+		content.setMouseTransparent(false);
+		loadingOverlay.hide();
 	}
 
 	@Nonnull
@@ -171,9 +222,9 @@ public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavi
 		TableColumn<ResourceEntry, String> valueColumn = new TableColumn<>("Value");
 
 		nameColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().name()));
-		hexIdColumn.setCellValueFactory(param -> new SimpleStringProperty(formatId(param.getValue().id())));
+		hexIdColumn.setCellValueFactory(param -> new SimpleStringProperty(formatResourceId(param.getValue().id())));
 		decimalIdColumn.setCellValueFactory(param -> new SimpleObjectProperty<>(param.getValue().id()));
-		valueColumn.setCellValueFactory(param -> new SimpleStringProperty(formatValue(resources, param.getValue())));
+		valueColumn.setCellValueFactory(param -> new SimpleStringProperty(formatMaybeComplexValue(resources, param.getValue())));
 
 		nameColumn.setPrefWidth(180);
 		hexIdColumn.setPrefWidth(100);
@@ -264,7 +315,7 @@ public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavi
 		imageView.setSmooth(true);
 
 		Label name = new Label(entry.name());
-		Label id = new Label(formatId(entry.id()));
+		Label id = new Label(formatResourceId(entry.id()));
 		id.getStyleClass().add(Styles.TEXT_SUBTLE);
 
 		VBox tile = new VBox(6, imageView, name, id);
@@ -308,44 +359,11 @@ public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavi
 	}
 
 	@Nonnull
-	private static String formatValue(@Nonnull AndroidRes resources, @Nonnull ResourceEntry entry) {
+	private static String formatMaybeComplexValue(@Nonnull AndroidRes resources, @Nonnull ResourceEntry entry) {
 		if (entry.isComplex())
 			return entry.complexValues().size() + " " + Lang.get("arscviewer.complex-entries-suffix");
 		BinaryResourceValue value = entry.simpleValue();
-		if (value == null)
-			return "";
-		String stringValue = entry.stringValue();
-		if (stringValue != null)
-			return stringValue;
-		String path = entry.resourcePath();
-		if (path != null)
-			return path;
 		return formatBinaryValue(resources, value);
-	}
-
-	@Nonnull
-	private static String formatBinaryValue(@Nonnull AndroidRes resources, @Nonnull BinaryResourceValue value) {
-		return switch (value.type()) {
-			case REFERENCE, DYNAMIC_REFERENCE -> {
-				String name = resources.getResName(value.data());
-				yield name == null ? "@" + formatId(value.data()) : "@" + name + " (" + formatId(value.data()) + ")";
-			}
-			case ATTRIBUTE, DYNAMIC_ATTRIBUTE -> {
-				String name = resources.getResName(value.data());
-				yield name == null ? "?" + formatId(value.data()) : "?" + name + " (" + formatId(value.data()) + ")";
-			}
-			case INT_BOOLEAN -> value.data() == 0 ? "false" : "true";
-			case INT_HEX -> formatId(value.data());
-			case INT_COLOR_ARGB8, INT_COLOR_RGB8, INT_COLOR_ARGB4, INT_COLOR_RGB4 ->
-					"#" + Integer.toHexString(value.data());
-			default -> value.type() + ": " + value.data();
-		};
-	}
-
-	@Nonnull
-	private static String formatComplexKey(@Nonnull AndroidRes resources, int key) {
-		String name = resources.getResName(key);
-		return name == null ? formatId(key) : name + " (" + formatId(key) + ")";
 	}
 
 	@Nonnull
@@ -355,11 +373,6 @@ public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavi
 			return "";
 		return resolve(workspace, entry).path() == null ?
 				resourcePath + " " + Lang.get("arscviewer.unknown-resource") : resourcePath;
-	}
-
-	@Nonnull
-	private static String formatId(int id) {
-		return "0x%08X".formatted(id);
 	}
 
 	@Nonnull
@@ -391,4 +404,14 @@ public class ArscPane extends BorderPane implements FileNavigable, UpdatableNavi
 	 * 		Resolved file path in the workspace for the entry's content, if it could be found.
 	 */
 	private record ResolvedEntry(@Nonnull ResourceEntry entry, @Nullable FilePathNode path) {}
+
+	/**
+	 * Plain load result for ARSC parsing work completed off the FX thread.
+	 *
+	 * @param resources
+	 * 		Decoded resource model.
+	 * @param entriesByType
+	 * 		Resource entries grouped by type.
+	 */
+	private record ArscLoadResult(@Nonnull AndroidRes resources, @Nonnull Map<String, List<ResourceEntry>> entriesByType) {}
 }
