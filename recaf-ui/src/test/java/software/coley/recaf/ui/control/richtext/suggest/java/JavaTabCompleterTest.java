@@ -25,6 +25,7 @@ import software.coley.recaf.workspace.model.EmptyWorkspace;
 import software.coley.recaf.workspace.model.Workspace;
 import software.coley.sourcesolver.model.CompilationUnitModel;
 import software.coley.sourcesolver.model.VariableModel;
+import software.coley.sourcesolver.resolve.entry.ClassEntry;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -275,6 +276,38 @@ class JavaTabCompleterTest extends TestBase {
 	}
 
 	@Test
+	void memberCompletionUsesGenericMethodReturnTypeForChainedCalls() {
+		String source = """
+				import java.util.List;
+
+				public class Demo {
+					void run() {
+						List<String> strings = List.of("A");
+						strings.getFirst().sub
+					}
+				}
+				""";
+		JavaCompletionContext context = scriptContext(source, null);
+		int caret = source.lastIndexOf("sub") + "sub".length();
+		JavaLexicalContext lexicalContext = new JavaLexicalContextParser().parse(source, caret);
+		assertEquals(ContextKind.MEMBER, lexicalContext.kind());
+		assertEquals("strings.getFirst()", lexicalContext.receiverText());
+		ResolverAdapter resolver = context.getResolver();
+		assertNotNull(resolver);
+		JavaCompletionSession session = new JavaCompletionSession(context, typeIndexService, caret);
+		ResolvedReceiver receiver = new ReceiverResolver().resolveReceiver(session, resolver, lexicalContext);
+		assertNotNull(receiver, "Expected chained receiver to resolve");
+		assertInstanceOf(ClassEntry.class, receiver.type());
+		assertEquals("java/lang/String", ((ClassEntry) receiver.type()).getName());
+
+		List<JavaCompletion> completions = completions(context, lexicalContext);
+
+		assertContainsMethodDisplay(completions, "substring(int)");
+		assertContainsMethodDisplay(completions, "substring(int, int)");
+		assertMissingMethodDisplay(completions, "subList(");
+	}
+
+	@Test
 	void memberCompletionsHideNonPublicMembersOfUnrelatedInstanceFields() throws IOException {
 		Workspace workspace = TestClassUtils.fromBundle(TestClassUtils.fromClasses(AccessibleFields.class));
 		String source = """
@@ -355,7 +388,7 @@ class JavaTabCompleterTest extends TestBase {
 				CompletionKind.METHOD, "publicMethod()");
 		assertNotNull(voidMethod);
 		assertEquals(";", voidMethod.trailingSuffix());
-		assertEquals(2, voidMethod.caretBacktrack());
+		assertEquals(1, voidMethod.caretBacktrack());
 		assertEquals("publicMethod();", voidMethod.fullInsertionText());
 
 		JavaCompletionContext nonVoidContext = new TestCompletionContext(workspace, null, null, fieldsAndMethodsPath, null, true);
@@ -364,8 +397,21 @@ class JavaTabCompleterTest extends TestBase {
 				CompletionKind.METHOD, "plusTwo()");
 		assertNotNull(nonVoidMethod);
 		assertEquals("", nonVoidMethod.trailingSuffix());
-		assertEquals(1, nonVoidMethod.caretBacktrack());
+		assertEquals(0, nonVoidMethod.caretBacktrack());
 		assertEquals("plusTwo()", nonVoidMethod.fullInsertionText());
+
+		JavaCompletion voidMethodWithParameters = JavaCompletionFactory.methodCompletion("methodWithParameters",
+				"(Ljava/lang/String;JFDLjava/util/List;)V", 0, null, true);
+		assertNotNull(voidMethodWithParameters);
+		assertEquals(";", voidMethodWithParameters.trailingSuffix());
+		assertEquals(2, voidMethodWithParameters.caretBacktrack());
+		assertEquals("methodWithParameters();", voidMethodWithParameters.fullInsertionText());
+
+		JavaCompletion nonVoidMethodWithParameters = JavaCompletionFactory.methodCompletion("substring",
+				"(II)Ljava/lang/String;", 0, null, true);
+		assertEquals("", nonVoidMethodWithParameters.trailingSuffix());
+		assertEquals(1, nonVoidMethodWithParameters.caretBacktrack());
+		assertEquals("substring()", nonVoidMethodWithParameters.fullInsertionText());
 	}
 
 	@Test
@@ -596,11 +642,31 @@ class JavaTabCompleterTest extends TestBase {
 						completions.stream().map(JavaCompletion::insertionText).toList());
 	}
 
+	private static void assertContainsMethodDisplay(@Nonnull List<JavaCompletion> completions, @Nonnull String displayText) {
+		assertTrue(completions.stream().anyMatch(completion ->
+						completion.kind() == CompletionKind.METHOD && completion.displayText().startsWith(displayText)),
+				"Missing method completion: " + displayText + " from " +
+						completions.stream()
+								.filter(completion -> completion.kind() == CompletionKind.METHOD)
+								.map(JavaCompletion::displayText)
+								.toList());
+	}
+
 	private static void assertMissingMethod(@Nonnull List<JavaCompletion> completions, @Nonnull String insertionText) {
 		JavaCompletion completion = findCompletion(completions, CompletionKind.METHOD, insertionText);
 		assertTrue(completion == null,
 				"Unexpected method completion: " + insertionText + " from " +
 						completions.stream().map(JavaCompletion::insertionText).toList());
+	}
+
+	private static void assertMissingMethodDisplay(@Nonnull List<JavaCompletion> completions, @Nonnull String displayPrefix) {
+		assertFalse(completions.stream().anyMatch(completion ->
+						completion.kind() == CompletionKind.METHOD && completion.displayText().startsWith(displayPrefix)),
+				"Unexpected method completion: " + displayPrefix + " from " +
+						completions.stream()
+								.filter(completion -> completion.kind() == CompletionKind.METHOD)
+								.map(JavaCompletion::displayText)
+								.toList());
 	}
 
 	private static void assertContainsField(@Nonnull List<JavaCompletion> completions, @Nonnull String insertionText) {
@@ -709,7 +775,7 @@ class JavaTabCompleterTest extends TestBase {
 		public software.coley.sourcesolver.resolve.result.Resolution resolveRawPositionSilently(int pos) {
 			if (resolver == null)
 				return null;
-			return resolver.resolveAt(mapCurrentPositionToAst(pos), null);
+			return resolver.resolveAt(mapCurrentPositionToAst(pos));
 		}
 
 		@Nullable
