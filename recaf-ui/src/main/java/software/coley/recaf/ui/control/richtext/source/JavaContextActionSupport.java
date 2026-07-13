@@ -45,6 +45,9 @@ import software.coley.recaf.ui.control.BoundLabel;
 import software.coley.recaf.ui.control.FontIconView;
 import software.coley.recaf.ui.control.richtext.Editor;
 import software.coley.recaf.ui.control.richtext.EditorComponent;
+import software.coley.recaf.ui.control.richtext.folding.FoldGutterGraphicFactory;
+import software.coley.recaf.ui.control.richtext.folding.FoldRegion;
+import software.coley.recaf.ui.control.richtext.folding.FoldTracking;
 import software.coley.recaf.ui.control.richtext.inheritance.Inheritance;
 import software.coley.recaf.ui.control.richtext.inheritance.InheritanceGutterGraphicFactory;
 import software.coley.recaf.ui.control.richtext.inheritance.InheritanceTracking;
@@ -61,7 +64,11 @@ import software.coley.recaf.workspace.model.Workspace;
 import software.coley.sourcesolver.Parser;
 import software.coley.sourcesolver.model.ClassModel;
 import software.coley.sourcesolver.model.CompilationUnitModel;
+import software.coley.sourcesolver.model.ImportModel;
+import software.coley.sourcesolver.model.MethodBodyModel;
 import software.coley.sourcesolver.model.MethodModel;
+import software.coley.sourcesolver.model.Model;
+import software.coley.sourcesolver.model.NamedModel;
 import software.coley.sourcesolver.model.VariableModel;
 import software.coley.sourcesolver.resolve.result.DescribableResolution;
 import software.coley.sourcesolver.resolve.result.MethodResolution;
@@ -98,6 +105,8 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 	private final NavigableMap<Integer, Integer> offsetMap = new TreeMap<>();
 	private final AstAvailabilityButton astAvailabilityButton = new AstAvailabilityButton();
 	private final InheritanceTracking inheritanceTracking = new InheritanceTracking();
+	private final FoldTracking foldTracking = new FoldTracking();
+	private final FoldGutterGraphicFactory foldGutterGraphicFactory = new FoldGutterGraphicFactory();
 	private final InheritanceGutterGraphicFactory inheritanceGutterGraphicFactory;
 	private final CellConfigurationService cellConfigurationService;
 	private final JavaContextActionManager contextManager;
@@ -225,7 +234,7 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 	 */
 	public void select(@Nonnull ClassMember member) {
 		CompilationUnitModel localUnit = unit;
- 		ResolverAdapter localResolver = resolver;
+		ResolverAdapter localResolver = resolver;
 		if (localUnit == null || localResolver == null) {
 			queuedSelectionTask = () -> select(member);
 		} else {
@@ -299,6 +308,44 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 	@Nullable
 	public AstResolveResult resolvePosition(int pos) {
 		return resolvePosition(pos, true);
+	}
+
+	/**
+	 * @param pos
+	 * 		Offset in the source.
+	 *
+	 * @return Path of the enclosing class/member declaration at the offset.
+	 */
+	@Nullable
+	public PathNode<?> getEnclosingDeclarationPath(int pos) {
+		CompilationUnitModel localUnit = unit;
+		ResolverAdapter localResolver = resolver;
+		ClassPathNode localPath = path;
+
+		// Skip if we don't have a valid AST to work with.
+		if (localUnit == null || localResolver == null || localPath == null)
+			return null;
+
+		// Resolve the class we're in at the current position.
+		int astPos = offset(pos);
+		ClassModel classModel = null;
+		for (ClassModel candidate : localUnit.getRecursiveChildrenOfType(ClassModel.class)) {
+			Range candidateRange = candidate.getRange();
+			if (!candidateRange.isWithin(astPos))
+				continue;
+			if ((classModel == null || candidateRange.length() < classModel.getRange().length()))
+				classModel = candidate;
+		}
+
+		// No class? No enclosing declaration path to return.
+		if (classModel == null)
+			return null;
+
+		// Check if we're in a member declaration, and if so return that path.
+		ClassMemberPathNode memberPath = getEnclosingMemberPath(localResolver, classModel, astPos);
+		if (memberPath != null)
+			return memberPath;
+		return getClassPath(localResolver, classModel, localPath);
 	}
 
 	@Override
@@ -424,14 +471,18 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 					logger.warn("Could not create Java AST model from source of: {} after {}ms", classNameEsc, diffMs);
 					astAvailabilityButton.setUnavailable();
 					inheritanceTracking.clear();
+					foldTracking.clear();
+
+					//redraw to remove any stale gutters
+					FxThreadUtil.run(() -> editor.redrawParagraphGraphics());
 				} else {
 					unit = resultingUnit;
-					resolver = astService.newJavaResolver(workspace, resultingUnit);
-					resolver.setClassContext(getPath().getValue());
+					resolver = astService.newJavaResolver(workspace, getPath(), resultingUnit);
 
 					logger.debugging(l -> l.info("AST parsed successfully, took {}ms", diffMs));
 					astAvailabilityButton.setAvailable();
 					populateInheritanceTracking();
+					populateFoldTracking();
 
 					// Run queued selection task
 					if (queuedSelectionTask != null)
@@ -454,15 +505,19 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 	private void populateInheritanceTracking() {
 		Workspace localWorkspace = workspace;
 		CompilationUnitModel localUnit = unit;
-		if (workspace == null || localUnit == null || resolver == null)
+		ResolverAdapter localResolver = resolver;
+		if (localWorkspace == null || localUnit == null || localResolver == null)
 			return;
 		CompletableFuture.supplyAsync(() -> {
 			List<Inheritance> inheritances = new ArrayList<>();
 			List<ClassModel> classModels = localUnit.getRecursiveChildrenOfType(ClassModel.class);
 			for (ClassModel classModel : classModels) {
 				// Resolve what class each model represents.
-				AstResolveResult classResolutionResult = resolver.resolveThenAdapt(classModel.getRange().begin());
-				if (classResolutionResult == null || !(classResolutionResult.path() instanceof ClassPathNode resolvedClassPath))
+				PathNode<?> classPath = getResolvedPath(localResolver, classModel);
+				if (classPath == null)
+					continue;
+				ClassPathNode resolvedClassPath = classPath.getPathOfType(ClassInfo.class);
+				if (resolvedClassPath == null)
 					continue;
 
 				// Get vertex in inheritance graph for the resolved class.
@@ -474,9 +529,9 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 				// Gather parents and children from inheritance graph.
 				// - Note: The map values may be null if the class is not in the workspace.
 				Map<InheritanceVertex, ClassPathNode> children = resolvedVertex.allChildren()
-						.collect(IdentityHashMap::new, (m, v) -> m.put(v, workspace.findClass(v.getName())), IdentityHashMap::putAll);
+						.collect(IdentityHashMap::new, (m, v) -> m.put(v, localWorkspace.findClass(v.getName())), IdentityHashMap::putAll);
 				Map<InheritanceVertex, ClassPathNode> parents = resolvedVertex.allParents()
-						.collect(IdentityHashMap::new, (m, v) -> m.put(v, workspace.findClass(v.getName())), IdentityHashMap::putAll);
+						.collect(IdentityHashMap::new, (m, v) -> m.put(v, localWorkspace.findClass(v.getName())), IdentityHashMap::putAll);
 
 				// For all methods in this model, find matching methods in parents/children and track them.
 				for (MethodModel methodModel : classModel.getMethods()) {
@@ -487,10 +542,8 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 					int line = 1 + editor.getCodeArea().offsetToPosition(methodLinePos, TwoDimensional.Bias.Forward).getMajor();
 
 					// Resolve what method each model represents.
-					// - Underlying model is funky and resolving the modifier position is the best programmatic way to resolve the method.
-					//   The method model's start position likely has an annotation or javadoc there that throws off resolution.
-					AstResolveResult methodResolutionResult = resolver.resolveThenAdapt(methodResolvePos);
-					if (methodResolutionResult == null || !(methodResolutionResult.path() instanceof ClassMemberPathNode resolvedMethodPath))
+					ClassMemberPathNode resolvedMethodPath = getMemberPath(localResolver, methodModel);
+					if (resolvedMethodPath == null)
 						continue;
 					ClassMember resolvedMethod = resolvedMethodPath.getValue();
 
@@ -505,7 +558,7 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 						}
 					});
 					parents.forEach((parent, parentClassPath) -> {
-						if (parent.hasMethod(methodName, methodDesc)) {
+						if (parent.hasMethod(methodName, methodDesc) && !isBlacklistedParent(parent, methodName, methodDesc)) {
 							ClassMemberPathNode parentMethodPath = parentClassPath.child(methodName, methodDesc);
 							if (parentMethodPath != null)
 								inheritances.add(new Inheritance.Parent(line, parentMethodPath));
@@ -519,6 +572,80 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 			inheritanceTracking.addItems(items);
 			editor.redrawParagraphGraphics();
 		}, FxThreadUtil.executor());
+	}
+
+	/**
+	 * Certain methods on Object are so commonly overridden that they add more noise than value to the inheritance gutter.
+	 *
+	 * @param parent
+	 * 		Parent vertex to check.
+	 * @param methodName
+	 * 		Method name to check.
+	 * @param methodDesc
+	 * 		Method descriptor to check.
+	 *
+	 * @return {@code true} if the parent method is blacklisted, {@code false} otherwise.
+	 */
+	private boolean isBlacklistedParent(@Nonnull InheritanceVertex parent, @Nonnull String methodName, @Nonnull String methodDesc) {
+		return "java/lang/Object".equals(parent.getName())
+				&& ("toString".equals(methodName)
+				|| "hashCode".equals(methodName)
+				|| "equals".equals(methodName));
+	}
+
+	/**
+	 * Parse the AST for foldable regions and update the {@link #foldTracking}.
+	 */
+	private void populateFoldTracking() {
+		CompilationUnitModel localUnit = unit;
+		if (localUnit == null || editor == null)
+			return;
+
+		CompletableFuture.supplyAsync(() -> {
+			List<FoldRegion> regions = new ArrayList<>();
+
+			List<ImportModel> imports = localUnit.getImports();
+			if (imports.size() > 1)
+				addFoldRegion(regions, imports.getFirst().getRange().begin(), imports.getLast().getRange().end());
+
+			for (ClassModel classModel : localUnit.getRecursiveChildrenOfType(ClassModel.class)) {
+				Range classRange = classModel.getRange();
+				NamedModel classNameModel = classModel.getNameModel();
+				int classStart = classNameModel == null ? classRange.begin() : classNameModel.getRange().begin();
+				addFoldRegion(regions, classStart, classRange.end());
+
+				for (MethodModel methodModel : classModel.getMethods()) {
+					MethodBodyModel body = methodModel.getMethodBody();
+					if (body != null)
+						addFoldRegion(regions, body.getRange().begin(), body.getRange().end());
+				}
+			}
+			return regions;
+		}, ThreadUtil.executor()).thenAcceptAsync(regions -> {
+			foldTracking.setRegions(regions);
+			editor.redrawParagraphGraphics();
+		}, FxThreadUtil.executor());
+	}
+
+	/**
+	 * Adds a fold region for the given offset range.
+	 *
+	 * @param regions
+	 * 		Collection to add to.
+	 * @param beginOffset
+	 * 		Range start offset in the text.
+	 * @param endOffset
+	 * 		Range end offset in the text.
+	 */
+	private void addFoldRegion(@Nonnull List<FoldRegion> regions, int beginOffset, int endOffset) {
+		if (beginOffset < 0 || endOffset <= beginOffset)
+			return;
+
+		CodeArea area = editor.getCodeArea();
+		int startLine = 1 + area.offsetToPosition(beginOffset, TwoDimensional.Bias.Forward).getMajor();
+		int endLine = 1 + area.offsetToPosition(endOffset, TwoDimensional.Bias.Backward).getMajor();
+		if (endLine > startLine)
+			regions.add(new FoldRegion(startLine, endLine));
 	}
 
 	/**
@@ -544,8 +671,9 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 	public void install(@Nonnull Editor editor) {
 		this.editor = editor;
 
-		// Setup inheritance tracking first. It will receive text change events before us.
+		// Setup inheritance and fold tracking first. They will receive text change events before us.
 		inheritanceTracking.install(editor);
+		foldTracking.install(editor);
 
 		// Now we register our own text change listeners.
 		editor.getTextChangeEventStream()
@@ -556,6 +684,10 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 		// Setup inheritance gutter graphics/tracking.
 		editor.setComponent(InheritanceTracking.COMPONENT_KEY, inheritanceTracking);
 		editor.getRootLineGraphicFactory().addLineGraphicFactory(inheritanceGutterGraphicFactory);
+
+		// Setup code folding gutter graphics/tracking.
+		editor.setComponent(FoldTracking.COMPONENT_KEY, foldTracking);
+		editor.getRootLineGraphicFactory().addLineGraphicFactory(foldGutterGraphicFactory);
 
 		// Setup context-menu on right-click.
 		CodeArea area = editor.getCodeArea();
@@ -609,9 +741,12 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 	@Override
 	public void uninstall(@Nonnull Editor editor) {
 		inheritanceTracking.uninstall(editor);
+		foldTracking.uninstall(editor);
 		editor.getRootLineGraphicFactory().removeLineGraphicFactory(inheritanceGutterGraphicFactory);
+		editor.getRootLineGraphicFactory().removeLineGraphicFactory(foldGutterGraphicFactory);
 		editor.getCodeArea().setOnContextMenuRequested(null);
 		editor.setComponent(InheritanceTracking.COMPONENT_KEY, null);
+		editor.setComponent(FoldTracking.COMPONENT_KEY, null);
 		this.editor = null;
 	}
 
@@ -654,6 +789,86 @@ public class JavaContextActionSupport implements EditorComponent, UpdatableNavig
 			ClassInfo classInfo = classPath.getValue();
 			ThreadUtil.run(() -> initialize(classInfo));
 		}
+	}
+
+	@Nullable
+	private static ClassMemberPathNode getEnclosingMemberPath(@Nonnull ResolverAdapter resolver,
+	                                                          @Nonnull ClassModel classModel,
+	                                                          int astPos) {
+		// Check for method declarations first.
+		for (MethodModel methodModel : classModel.getMethods()) {
+			if (!methodModel.getRange().isWithin(astPos))
+				continue;
+			ClassMemberPathNode path = getMemberPath(resolver, methodModel);
+			if (path != null)
+				return path;
+		}
+
+		// Check for field declarations last.
+		for (VariableModel fieldModel : classModel.getFields()) {
+			if (!fieldModel.getRange().isWithin(astPos))
+				continue;
+			ClassMemberPathNode path = getMemberPath(resolver, fieldModel);
+			if (path != null)
+				return path;
+		}
+
+		return null;
+	}
+
+	@Nullable
+	private static ClassMemberPathNode getMemberPath(@Nonnull ResolverAdapter resolver, int astPos) {
+		PathNode<?> path = getResolvedPath(resolver, astPos);
+		if (path == null)
+			return null;
+		return path.getPathOfType(ClassMember.class);
+	}
+
+	@Nullable
+	private static ClassMemberPathNode getMemberPath(@Nonnull ResolverAdapter resolver, @Nonnull MethodModel method) {
+		PathNode<?> path = getResolvedPath(resolver, method);
+		if (path == null)
+			return null;
+		return path.getPathOfType(ClassMember.class);
+	}
+
+	@Nullable
+	private static ClassMemberPathNode getMemberPath(@Nonnull ResolverAdapter resolver, @Nonnull VariableModel field) {
+		PathNode<?> path = getResolvedPath(resolver, field);
+		if (path == null)
+			return null;
+		return path.getPathOfType(ClassMember.class);
+	}
+
+	@Nonnull
+	private static ClassPathNode getClassPath(@Nonnull ResolverAdapter resolver,
+	                                          @Nonnull ClassModel classModel,
+	                                          @Nonnull ClassPathNode fallbackPath) {
+		PathNode<?> path = getResolvedPath(resolver, classModel.getRange().begin());
+		if (path == null)
+			return fallbackPath;
+
+		ClassPathNode classPath = path.getPathOfType(ClassInfo.class);
+		if (classPath == null)
+			return fallbackPath;
+
+		return classPath;
+	}
+
+	@Nullable
+	private static PathNode<?> getResolvedPath(@Nonnull ResolverAdapter resolver, @Nonnull Model model) {
+		AstResolveResult result = resolver.adapt(model.resolve(resolver), model);
+		if (result == null)
+			return null;
+		return result.path();
+	}
+
+	@Nullable
+	private static PathNode<?> getResolvedPath(@Nonnull ResolverAdapter resolver, int astPos) {
+		AstResolveResult result = resolver.resolveThenAdapt(astPos);
+		if (result == null)
+			return null;
+		return result.path();
 	}
 
 	/**

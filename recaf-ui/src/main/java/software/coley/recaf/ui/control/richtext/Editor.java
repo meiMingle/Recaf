@@ -16,8 +16,10 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.text.Text;
 import org.fxmisc.flowless.Cell;
 import org.fxmisc.flowless.VirtualFlow;
+import org.fxmisc.richtext.CharacterHit;
 import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.GenericStyledArea;
+import org.fxmisc.richtext.NavigationActions;
 import org.fxmisc.richtext.StyleActions;
 import org.fxmisc.richtext.model.PlainTextChange;
 import org.fxmisc.richtext.model.ReadOnlyStyledDocument;
@@ -35,6 +37,7 @@ import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.behavior.Closing;
 import software.coley.recaf.ui.control.VirtualizedScrollPaneWrapper;
 import software.coley.recaf.ui.control.richtext.bracket.SelectedBracketTracking;
+import software.coley.recaf.ui.control.richtext.highlight.SelectedWordHighlighting;
 import software.coley.recaf.ui.control.richtext.linegraphics.RootLineGraphicFactory;
 import software.coley.recaf.ui.control.richtext.problem.ProblemTracking;
 import software.coley.recaf.ui.control.richtext.suggest.TabCompleter;
@@ -49,6 +52,7 @@ import software.coley.recaf.util.StringUtil;
 import software.coley.recaf.util.threading.ThreadPoolFactory;
 import software.coley.recaf.util.threading.ThreadUtil;
 
+import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.Collections;
@@ -78,9 +82,10 @@ public class Editor extends BorderPane implements Closing {
 	public static final int SHORT_DELAY_MS = 150;
 	public static final int MEDIUM_DELAY_MS = 400;
 	private static final StyleResult FALLBACK_STYLE_RESULT = new StyleResult(StyleSpans.singleton(Collections.emptyList(), 0), 0);
+	private static final Map<String, Method> AREA_METHOD_CACHE = new ConcurrentHashMap<>();
 	private final Map<String, EditorComponent> components = new ConcurrentHashMap<>();
 	private final StackPane stackPane = new StackPane();
-	private final CodeArea codeArea = new SafeCodeArea();
+	private final SafeCodeArea codeArea = new SafeCodeArea();
 	private final VirtualizedScrollPaneWrapper<CodeArea> codeScrollWrapper;
 	private final VirtualFlow<?, ?> virtualFlow;
 	private final MemoizationList<Cell<?, ?>> virtualCellList;
@@ -91,6 +96,7 @@ public class Editor extends BorderPane implements Closing {
 	private ReadOnlyStyledDocument<Collection<String>, String, Collection<String>> lastDocumentSnapshot;
 	private ScrollReset lastScrollReset = null;
 	private CaretReset lastCaretReset = null;
+	private SelectedWordHighlighting selectedWordHighlighting;
 	private TabCompleter<?> tabCompleter;
 	private SyntaxHighlighter syntaxHighlighter;
 	private SelectedBracketTracking selectedBracketTracking;
@@ -124,6 +130,8 @@ public class Editor extends BorderPane implements Closing {
 					handleTab(e);
 				else if (e.getCode() == KeyCode.ENTER)
 					handleNewline(e);
+				else if (e.getCode() == KeyCode.UP || e.getCode() == KeyCode.DOWN)
+					handleVerticalNavigation(e);
 			} catch (Throwable t) {
 				logger.error("Error handling tab/newline interception in editor", t);
 			}
@@ -169,7 +177,7 @@ public class Editor extends BorderPane implements Closing {
 				.reduceSuccessions(Collections::singletonList, Lists::add, Duration.ofMillis(SHORT_DELAY_MS))
 				.addObserver(changes -> {
 					try {
-						// Pass to highlighter.
+						// Pass to syntax highlighter.
 						if (syntaxHighlighter != null) {
 							for (PlainTextChange change : changes) {
 								schedule(syntaxPool, FALLBACK_STYLE_RESULT, () -> {
@@ -202,6 +210,8 @@ public class Editor extends BorderPane implements Closing {
 
 	@Override
 	public void close() {
+		if (selectedWordHighlighting != null)
+			selectedWordHighlighting.uninstall(this);
 		if (selectedBracketTracking != null)
 			selectedBracketTracking.close();
 		if (!syntaxPool.isShutdown())
@@ -223,6 +233,7 @@ public class Editor extends BorderPane implements Closing {
 	 * 		Paragraph index.
 	 */
 	public void showParagraphAtTop(int paragraph) {
+		expandFoldsContaining(paragraph);
 		virtualFlow.showAsFirst(paragraph);
 	}
 
@@ -234,6 +245,7 @@ public class Editor extends BorderPane implements Closing {
 	 * 		Paragraph index.
 	 */
 	public void showParagraphAtBottom(int paragraph) {
+		expandFoldsContaining(paragraph);
 		virtualFlow.showAsLast(paragraph);
 	}
 
@@ -245,11 +257,23 @@ public class Editor extends BorderPane implements Closing {
 	 * 		Paragraph index.
 	 */
 	public void showParagraphAtCenter(int paragraph) {
+		expandFoldsContaining(paragraph);
+
 		// Approximate center position.
 		// - Assuming all cells are the same height, we can compute the offset needed to center the paragraph.
 		int count = 1 + Math.max(virtualFlow.getLastVisibleIndex() - virtualFlow.getFirstVisibleIndex(), 0);
 		double paragraphHeight = getHeight() / count;
 		virtualFlow.showAtOffset(paragraph, count / 2.0 * paragraphHeight / 2.0);
+	}
+
+	/**
+	 * Force a full restyle of the entire document.
+	 */
+	public void restyleAll() {
+		String text = getText();
+		if (text.isBlank() || syntaxHighlighter == null)
+			return;
+		setStyleSpans(0, syntaxHighlighter.createStyleSpans(text, 0, getTextLength()));
 	}
 
 	/**
@@ -260,18 +284,28 @@ public class Editor extends BorderPane implements Closing {
 	 * @param spans
 	 * 		Style spans to apply.
 	 */
-	private void setStyleSpans(int from, @Nonnull StyleSpans<Collection<String>> spans) {
+	public void setStyleSpans(int from, @Nonnull StyleSpans<Collection<String>> spans) {
 		// Updating the styles can cause the 'Navigator' to set its target position back to zero for... some reason.
 		// See Navigator:
 		//  - setTargetPosition
 		//  - scrollCurrentPositionBy
-		// To prevent jank, we record the first visible index before the update, and restore it after.
-		//
-		// We use the CodeArea's "showParagraphAtTop" instead of our direct one on the VirtualFlow, because the CodeArea's
-		// suspension handling is necessary to keep event ordering correct (where the restoration happens after the janky reset).
-		int virtualFlowFirst = virtualFlow.getFirstVisibleIndex();
-		codeArea.setStyleSpans(from, spans);
-		codeArea.showParagraphAtTop(virtualFlowFirst);
+		// To prevent jank, record the precise scroll-pixel estimate before the update, and restore it after.
+		// Using the first visible paragraph snaps mouse-wheel scroll positions to the top of that paragraph.
+		double scrollY = virtualFlow.getEstimatedScrollY();
+		int firstVisibleIndex = virtualFlow.getFirstVisibleIndex();
+		if (selectedWordHighlighting != null) // Inject selected-word highlighting into the style spans.
+			spans = selectedWordHighlighting.apply(from, spans);
+
+		// Syntax and selection highlighting are visual changes and should not be undoable text edits.
+		StyleSpans<Collection<String>> finalSpans = spans;
+		codeArea.runWithoutUndo(() -> codeArea.setStyleSpans(from, finalSpans));
+
+		// We want to use the CodeArea variants of scrolling rather than the virtual-flow for event order reasons.
+		// Without the suspension handling of these variants some of the restores may not take effect.
+		if (Double.isFinite(scrollY))
+			codeArea.scrollYToPixel(scrollY);
+		else
+			codeArea.showParagraphAtTop(firstVisibleIndex);
 	}
 
 	/**
@@ -457,11 +491,19 @@ public class Editor extends BorderPane implements Closing {
 	}
 
 	/**
-	 * @return Current highlighter.
+	 * @return Current syntax highlighter.
 	 */
 	@Nullable
 	public SyntaxHighlighter getSyntaxHighlighter() {
 		return syntaxHighlighter;
+	}
+
+	/**
+	 * @return Current selected-word highlighter.
+	 */
+	@Nullable
+	public SelectedWordHighlighting getSelectedWordHighlighting() {
+		return selectedWordHighlighting;
 	}
 
 	/**
@@ -476,12 +518,30 @@ public class Editor extends BorderPane implements Closing {
 
 		// Set and install new instance.
 		this.syntaxHighlighter = syntaxHighlighter;
-		if (syntaxHighlighter != null) {
+		if (syntaxHighlighter != null)
 			syntaxHighlighter.install(this);
-			String text = getText();
-			if (!text.isBlank())
-				setStyleSpans(0, syntaxHighlighter.createStyleSpans(text, 0, getTextLength()));
-		}
+		restyleAll();
+	}
+
+	/**
+	 * @param selectedWordHighlighting
+	 * 		Highlighting implementation for selected-word occurrences.
+	 */
+	public void setSelectedWordHighlighting(@Nullable SelectedWordHighlighting selectedWordHighlighting) {
+		// Skip if it is already set to the same instance.
+		if (this.selectedWordHighlighting == selectedWordHighlighting)
+			return;
+
+		// Uninstall prior instance.
+		SelectedWordHighlighting previousSelectedWordHighlighting = this.selectedWordHighlighting;
+		if (previousSelectedWordHighlighting != null)
+			previousSelectedWordHighlighting.uninstall(this);
+
+		// Set and install new instance.
+		this.selectedWordHighlighting = selectedWordHighlighting;
+		if (selectedWordHighlighting != null)
+			selectedWordHighlighting.install(this);
+		restyleAll();
 	}
 
 	/**
@@ -742,7 +802,8 @@ public class Editor extends BorderPane implements Closing {
 	 * @return {@code true} when the paragraph is visible.
 	 */
 	public boolean isParagraphVisible(int line) {
-		// TODO: If we ever add paragraph folding back, we need to check those cases here and return false
+		if (isParagraphFolded(line))
+			return false;
 
 		// We use the internal virtual flow because the provided methods call 'layout()' unnecessarily
 		//  - firstVisibleParToAllParIndex()
@@ -751,6 +812,52 @@ public class Editor extends BorderPane implements Closing {
 		// This gets called rather frequently so the constant layout requests contribute a massive waste of time.
 		// If we use these methods from the internal 'VirtualFlow' we skip all that and the result is almost instant.
 		return line >= virtualFlow.getFirstVisibleIndex() && line <= virtualFlow.getLastVisibleIndex();
+	}
+
+	/**
+	 * @param paragraph
+	 * 		Paragraph index, 0-based.
+	 *
+	 * @return {@code true} when the paragraph is folded away.
+	 */
+	public boolean isParagraphFolded(int paragraph) {
+		if (paragraph < 0 || paragraph >= codeArea.getParagraphs().size())
+			return false;
+
+		return codeArea.isFolded(paragraph);
+	}
+
+	/**
+	 * Collapses the given paragraph range, hiding {@code startParagraph + 1} to {@code endParagraph},
+	 * {@code startParagraph} itself is kept as header.
+	 *
+	 * @param startParagraph
+	 * 		Header paragraph of the fold, remains visible.
+	 * @param endParagraph
+	 * 		Last paragraph of the fold, inclusive.
+	 */
+	public void foldParagraphs(int startParagraph, int endParagraph) {
+		codeArea.foldParagraphsSafely(startParagraph, endParagraph);
+	}
+
+	/**
+	 * Expands the folded block following the given paragraph.
+	 *
+	 * @param startParagraph
+	 * 		Index of the header paragraph of the fold.
+	 */
+	public void unfoldParagraphs(int startParagraph) {
+		codeArea.unfoldParagraphsSafely(startParagraph);
+	}
+
+	/**
+	 * Expands any folds hiding the given paragraph.
+	 *
+	 * @param paragraph
+	 * 		Paragraph index to make visible.
+	 */
+	public void expandFoldsContaining(int paragraph) {
+		codeArea.expandFoldsContaining(paragraph);
 	}
 
 	/**
@@ -871,6 +978,97 @@ public class Editor extends BorderPane implements Closing {
 
 		// Clear recent keys so that we reset the state of tracking for the open-bracket key.
 		recentKeys.clear();
+	}
+
+	private void handleVerticalNavigation(@Nonnull KeyEvent event) {
+		if (event.isAltDown() || event.isControlDown() || event.isMetaDown())
+			return;
+
+		if (tabCompleter != null && tabCompleter.isCompletionActive())
+			return;
+
+		int direction = event.getCode() == KeyCode.UP ? -1 : 1;
+		int paragraphCount = codeArea.getParagraphs().size();
+		int paragraph = codeArea.getCurrentParagraph();
+
+		int target = paragraph + direction;
+		if (target < 0 || target >= paragraphCount || !isParagraphFolded(target))
+			return;
+
+		int skippedLines = 0;
+		while (target >= 0 && target < paragraphCount && isParagraphFolded(target)) {
+			skippedLines += codeArea.getParagraphLinesCount(target);
+			target += direction;
+		}
+		if (target < 0 || target >= paragraphCount)
+			return;
+
+		event.consume();
+
+		moveCaretByVisualLines(direction * (1 + skippedLines), event.isShiftDown() ?
+				NavigationActions.SelectionPolicy.ADJUST :
+				NavigationActions.SelectionPolicy.CLEAR);
+	}
+
+	/**
+	 * Mirroring the default caret navigation handling in {@code GenericStyledAreaBehavior#downLines}, while handling
+	 * x-offsets normally, even with folded paragraphs.
+	 *
+	 * @param lineDelta
+	 * 		Number of visual lines to move by.
+	 * @param policy
+	 *        {@link NavigationActions.SelectionPolicy#CLEAR} for simple navigation,
+	 *        {@link NavigationActions.SelectionPolicy#ADJUST} for selection.
+	 */
+	private void moveCaretByVisualLines(int lineDelta, @Nonnull NavigationActions.SelectionPolicy policy) {
+		try {
+			TwoDimensional.Position currentLine = Unchecked.cast(resolveAreaMethod("currentLine").invoke(codeArea));
+			if (currentLine == null)
+				return;
+
+			TwoDimensional.Position targetLine = currentLine.offsetBy(lineDelta, TwoDimensional.Bias.Forward).clamp();
+			if (currentLine.sameAs(targetLine))
+				return;
+
+			Object targetOffset = resolveAreaMethod("getTargetCaretOffset").invoke(codeArea);
+			if (targetOffset == null)
+				return;
+
+			CharacterHit hit = Unchecked.cast(
+					resolveAreaMethod(
+							"hit", targetOffset.getClass(), TwoDimensional.Position.class
+					).invoke(codeArea, targetOffset, targetLine)
+			);
+			codeArea.moveTo(hit.getInsertionIndex(), policy);
+		} catch (ReflectiveOperationException e) {
+			throw new IllegalStateException("Failed RichTextFX caret navigation", e);
+		}
+	}
+
+	/**
+	 * Resolves a {@link GenericStyledArea} method, resolved methods are cached and shared across editors.
+	 *
+	 * @param name
+	 * 		Method name.
+	 * @param argTypes
+	 * 		Parameter types.
+	 *
+	 * @return Accessible {@link Method}.
+	 */
+	@Nonnull
+	private Method resolveAreaMethod(@Nonnull String name, @Nonnull Class<?>... argTypes) {
+		return AREA_METHOD_CACHE.computeIfAbsent(name, n -> {
+			for (Class<?> c = codeArea.getClass(); c != null; c = c.getSuperclass()) {
+				try {
+					Method method = c.getDeclaredMethod(n, argTypes);
+					method.setAccessible(true);
+					return method;
+				} catch (NoSuchMethodException ignored) {
+				}
+			}
+
+			throw new IllegalStateException("RichTextFX navigation method not found: " + n);
+		});
 	}
 
 	/**

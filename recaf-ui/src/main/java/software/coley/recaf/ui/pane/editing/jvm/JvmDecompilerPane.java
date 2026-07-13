@@ -35,6 +35,7 @@ import software.coley.recaf.services.decompile.JvmDecompiler;
 import software.coley.recaf.services.cell.CellConfigurationService;
 import software.coley.recaf.services.info.association.FileTypeSyntaxAssociationService;
 import software.coley.recaf.services.navigation.Actions;
+import software.coley.recaf.services.navigation.NavigationHistoryService;
 import software.coley.recaf.services.source.AstResolveResult;
 import software.coley.recaf.services.source.AstService;
 import software.coley.recaf.services.tutorial.TutorialConfig;
@@ -53,6 +54,7 @@ import software.coley.recaf.ui.control.richtext.suggest.java.typeindex.JavaTypeI
 import software.coley.recaf.ui.control.richtext.source.JavaContextActionSupport;
 import software.coley.recaf.ui.pane.editing.AbstractDecompilePane;
 import software.coley.recaf.ui.pane.editing.ToolsContainerComponent;
+import software.coley.recaf.ui.pane.editing.text.TextConfig;
 import software.coley.recaf.util.Animations;
 import software.coley.recaf.util.FxThreadUtil;
 import software.coley.recaf.util.JavaVersion;
@@ -97,6 +99,7 @@ public class JvmDecompilerPane extends AbstractDecompilePane {
 	                         @Nonnull ToolsContainerComponent toolsContainer,
 	                         @Nonnull AstService astService,
 	                         @Nonnull JavaContextActionSupport contextActionSupport,
+	                         @Nonnull NavigationHistoryService navigationHistoryService,
 	                         @Nonnull CellConfigurationService cellConfigurationService,
 	                         @Nonnull FileTypeSyntaxAssociationService languageAssociation,
 	                         @Nonnull DecompilerManager decompilerManager,
@@ -104,9 +107,10 @@ public class JvmDecompilerPane extends AbstractDecompilePane {
 	                         @Nonnull JavacCompiler javac,
 	                         @Nonnull JavacCompilerConfig javacConfig,
 	                         @Nonnull TabCompletionConfig tabCompletionConfig,
+							 @Nonnull TextConfig textConfig,
 	                         @Nonnull Actions actions) {
-		super(decompileConfig, tutorialConfig, searchBar, astService, contextActionSupport, cellConfigurationService,
-				languageAssociation, decompilerManager, javaTypeIndexService, tabCompletionConfig);
+		super(decompileConfig, tutorialConfig, searchBar, astService, contextActionSupport, navigationHistoryService, cellConfigurationService,
+				languageAssociation, decompilerManager, javaTypeIndexService, tabCompletionConfig, textConfig);
 		this.javacDebug = new ObservableBoolean(javacConfig.getDefaultEmitDebug().getValue());
 		this.javacTarget = new ObservableInteger(javacConfig.getDefaultTargetVersion().getValue());
 		this.javacDownsampleTarget = new ObservableInteger(javacConfig.getDefaultDownsampleTargetVersion().getValue());

@@ -38,7 +38,6 @@ public class JvmAssemblerPipeline extends AbstractAssemblerPipeline<JvmClassInfo
 	public static final String SERVICE_ID = "jvm-assembler";
 	private static final Logger logger = Logging.get(JvmAssemblerPipeline.class);
 	private final ASTProcessor processor = new ASTProcessor(BytecodeFormat.JVM);
-	private final InheritanceGraph inheritanceGraph;
 	private final Workspace workspace;
 
 	public JvmAssemblerPipeline(@Nonnull Workspace workspace,
@@ -47,7 +46,6 @@ public class JvmAssemblerPipeline extends AbstractAssemblerPipeline<JvmClassInfo
 	                            @Nonnull JvmAssemblerPipelineConfig jvmConfig) {
 		super(generalConfig, jvmConfig, inheritanceGraph);
 		this.workspace = workspace;
-		this.inheritanceGraph = inheritanceGraph;
 	}
 
 	@Nonnull
@@ -75,6 +73,9 @@ public class JvmAssemblerPipeline extends AbstractAssemblerPipeline<JvmClassInfo
 				}
 				return engine;
 			});
+
+		options.variableTableMode(getConfig().getVariableTableMode());
+		options.reuseOverlayPool(getConfig().isRecycleConstPool());
 		return options;
 	}
 
@@ -105,5 +106,11 @@ public class JvmAssemblerPipeline extends AbstractAssemblerPipeline<JvmClassInfo
 			logger.error("Uncaught error creating class printer for: {}", classInfo.getName(), t);
 			return Result.exception(t);
 		}
+	}
+
+	@Nonnull
+	@Override
+	public JvmAssemblerPipelineConfig getConfig() {
+		return (JvmAssemblerPipelineConfig) super.getConfig();
 	}
 }

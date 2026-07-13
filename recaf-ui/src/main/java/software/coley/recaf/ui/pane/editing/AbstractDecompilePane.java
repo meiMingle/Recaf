@@ -33,6 +33,7 @@ import software.coley.recaf.services.mapping.MappingResults;
 import software.coley.recaf.services.mapping.Mappings;
 import software.coley.recaf.services.navigation.ClassNavigable;
 import software.coley.recaf.services.navigation.Navigable;
+import software.coley.recaf.services.navigation.NavigationHistoryService;
 import software.coley.recaf.services.navigation.UpdatableNavigable;
 import software.coley.recaf.services.source.AstMapper;
 import software.coley.recaf.services.source.AstService;
@@ -42,6 +43,7 @@ import software.coley.recaf.ui.control.BoundLabel;
 import software.coley.recaf.ui.control.animation.LabelByteAnimationTransition;
 import software.coley.recaf.ui.control.richtext.Editor;
 import software.coley.recaf.ui.control.richtext.bracket.SelectedBracketTracking;
+import software.coley.recaf.ui.control.richtext.highlight.SelectedWordHighlighting;
 import software.coley.recaf.ui.control.richtext.problem.ProblemTracking;
 import software.coley.recaf.ui.control.richtext.search.SearchBar;
 import software.coley.recaf.ui.control.richtext.suggest.java.JavaTabCompleter;
@@ -51,6 +53,7 @@ import software.coley.recaf.ui.control.richtext.source.JavaContextActionSupport;
 import software.coley.recaf.ui.pane.editing.android.AndroidDecompilerPane;
 import software.coley.recaf.ui.pane.editing.jvm.DecompilerPaneConfig;
 import software.coley.recaf.ui.pane.editing.jvm.JvmDecompilerPane;
+import software.coley.recaf.ui.pane.editing.text.TextConfig;
 import software.coley.recaf.util.FxThreadUtil;
 import software.coley.recaf.util.Lang;
 import software.coley.recaf.util.StringDiff;
@@ -94,11 +97,13 @@ public class AbstractDecompilePane extends BorderPane implements ClassNavigable,
 	                                @Nonnull SearchBar searchBar,
 	                                @Nonnull AstService astService,
 	                                @Nonnull JavaContextActionSupport contextActionSupport,
+	                                @Nonnull NavigationHistoryService navigationHistoryService,
 	                                @Nonnull CellConfigurationService cellConfigurationService,
 	                                @Nonnull FileTypeSyntaxAssociationService languageAssociation,
 	                                @Nonnull DecompilerManager decompilerManager,
 	                                @Nonnull JavaTypeIndexService javaTypeIndexService,
-	                                @Nonnull TabCompletionConfig tabCompletionConfig) {
+	                                @Nonnull TabCompletionConfig tabCompletionConfig,
+	                                @Nonnull TextConfig textConfig) {
 		this.astService = astService;
 		this.contextActionSupport = contextActionSupport;
 		this.decompilerManager = decompilerManager;
@@ -111,10 +116,16 @@ public class AbstractDecompilePane extends BorderPane implements ClassNavigable,
 		// Configure the editor
 		editor = new Editor();
 		languageAssociation.configureEditorSyntax("java", editor);
-		editor.setSelectedBracketTracking(new SelectedBracketTracking());
+		if (textConfig.doHighlightWord()) editor.setSelectedWordHighlighting(new SelectedWordHighlighting());
+		if (textConfig.doTrackBrackets()) editor.setSelectedBracketTracking(new SelectedBracketTracking());
 		editor.setProblemTracking(problemTracking);
 		editor.getRootLineGraphicFactory().addDefaultCodeGraphicFactories();
 		contextActionSupport.install(editor);
+		editor.getCaretPosEventStream().addObserver(change -> {
+			PathNode<?> enclosingPath = contextActionSupport.getEnclosingDeclarationPath(change.getNewValue());
+			if (enclosingPath != null)
+				navigationHistoryService.record(enclosingPath);
+		});
 		if (tabCompletionConfig.isEnabledInJavaSource())
 			editor.setTabCompleter(new JavaTabCompleter(contextActionSupport, cellConfigurationService, javaTypeIndexService, tabCompletionConfig));
 		searchBar.install(editor);
@@ -240,8 +251,7 @@ public class AbstractDecompilePane extends BorderPane implements ClassNavigable,
 				CompilationUnitModel unit = contextActionSupport.getUnit();
 				Workspace workspace = path.getValueOfType(Workspace.class);
 				if (unit != null && workspace != null) {
-					ResolverAdapter resolver = astService.newJavaResolver(workspace, unit);
-					resolver.setClassContext(getPath().getValue());
+					ResolverAdapter resolver = astService.newJavaResolver(workspace, getPath(), unit);
 					String modifiedSource = astService.applyMappings(unit, resolver, mappings);
 
 					// If there were no changes made then the AST service failed to make dynamic changes.

@@ -16,6 +16,7 @@ import software.coley.recaf.ui.config.KeybindingConfig;
 import software.coley.recaf.ui.control.richtext.Editor;
 import software.coley.recaf.ui.control.richtext.bracket.BracketMatchGraphicFactory;
 import software.coley.recaf.ui.control.richtext.bracket.SelectedBracketTracking;
+import software.coley.recaf.ui.control.richtext.highlight.SelectedWordHighlighting;
 import software.coley.recaf.ui.control.richtext.search.SearchBar;
 import software.coley.recaf.util.Animations;
 import software.coley.recaf.util.FxThreadUtil;
@@ -42,12 +43,14 @@ public class TextPane extends BorderPane implements FileNavigable, UpdatableNavi
 	@Inject
 	public TextPane(@Nonnull FileTypeSyntaxAssociationService languageAssociation,
 	                @Nonnull KeybindingConfig keys,
-	                @Nonnull SearchBar searchBar) {
+	                @Nonnull SearchBar searchBar,
+	                @Nonnull TextConfig textConfig) {
 		this.languageAssociation = languageAssociation;
 
 		// Configure the editor
 		editor = new Editor();
-		editor.setSelectedBracketTracking(new SelectedBracketTracking());
+		if (textConfig.doHighlightWord()) editor.setSelectedWordHighlighting(new SelectedWordHighlighting());
+		if (textConfig.doTrackBrackets()) editor.setSelectedBracketTracking(new SelectedBracketTracking());
 		editor.getRootLineGraphicFactory().addLineGraphicFactory(new BracketMatchGraphicFactory());
 		searchBar.install(editor);
 
