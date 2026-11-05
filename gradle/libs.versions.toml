@@ -42,6 +42,7 @@ regex = "0.1.19"
 richtextfx = "cbdcbd1440"
 treemapfx = "1.1.0"
 vineflower = "1.12.0"
+sporeflower = '2026.11.03.38.1'
 fernflower = "261.25134.95"
 forgeflower = "2.0.674.2"
 sourcesolver = "1.5.1"
@@ -147,6 +148,9 @@ richtextfx = { module = "com.github.Col-E:RichTextFX", version.ref = "richtextfx
 treemapfx = { module = "software.coley:treemap-fx", version.ref = "treemapfx" }
 
 vineflower = { module = "org.vineflower:vineflower", version.ref = "vineflower" }
+
+sporeflower = { module = "com.github.hourianto.sporeflower:sporeflower", version.ref = "sporeflower" }
+
 
 fernflower = { module = "com.jetbrains.intellij.java:java-decompiler-engine", version.ref = "fernflower" }
 

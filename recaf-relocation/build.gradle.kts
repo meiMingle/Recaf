@@ -42,7 +42,9 @@ abstract class MyAbsRepackager : TransformAction<TransformParameters.None> {
 
     override fun transform(outputs: TransformOutputs) {
         val input = getInputArtifact().get().asFile
-        val repackPrefix = if (input.name.contains(Regex("vineflower"))) {
+        val repackPrefix = if (input.name.contains(Regex("sporeflower"))) {
+            "recaf/relocation/libs/sporeflower/"
+        } else if (input.name.contains(Regex("vineflower"))) {
             "recaf/relocation/libs/vineflower/"
         } else if (input.name.contains(Regex("java-decompiler-engine"))) {
             "recaf/relocation/libs/fernflower/"
@@ -171,6 +173,7 @@ dependencies {
     }
 
     repackage(libs.vineflower)
+    repackage(libs.sporeflower)
     repackage(libs.fernflower)
     repackage(":forgeflower:2.0.674.2")
     api(files(repackage.files))
